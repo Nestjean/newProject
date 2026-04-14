@@ -150,3 +150,17 @@ STATIC_URL = 'static/'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # ton React
 ]
+
+
+# Configuration email (pour l'envoi du code de réinitialisation)
+# Pour le développement, utilisez la console
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # Affiche dans la console
+
+# En production, utilisez un vrai serveur SMTP
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = 'votre_email@gmail.com'
+# EMAIL_HOST_PASSWORD = 'votre_mot_de_passe'
+# DEFAULT_FROM_EMAIL = 'Cooperative Transport <noreply@cooperative.com>'

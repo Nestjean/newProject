@@ -10,6 +10,17 @@ from datetime import datetime, timedelta
 from .models import *
 from .serializers import *
 from .permissions import *
+from rest_framework.views import APIView 
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import authenticate
+from django.core.mail import send_mail
+from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from .models import Utilisateur
+from .serializers import UtilisateurSerializer
+import random
 
 # Create your views here.
 
@@ -33,7 +44,223 @@ class UtilisateurViewSet(viewsets.ModelViewSet):
         chauffeur = self.get_object()
         trajets = Trajet.objects.filter(chauffeur=chauffeur)
         serializer = TrajetSerializer(trajets, many=True)
-        return Response(serializer.data)
+        return Response(serializer.data) 
+
+# ========== 1. LOGIN ==========
+class LoginView(APIView):
+    permission_classes = []  # Pas besoin d'authentification
+    
+    def post(self, request):
+        username = request.data.get('username')
+        password = request.data.get('password')
+        
+        if not username or not password:
+            return Response({
+                'error': 'Veuillez fournir nom d\'utilisateur et mot de passe'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        user = authenticate(username=username, password=password)
+        
+        if user and user.est_actif:
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'success': True,
+                'access_token': str(refresh.access_token),
+                'refresh_token': str(refresh),
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'role': user.role,
+                    'nom': user.first_name,
+                    'prenom': user.last_name,
+                }
+            })
+        elif user and not user.est_actif:
+            return Response({
+                'error': 'Votre compte est désactivé. Contactez l\'administrateur.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({
+                'error': 'Nom d\'utilisateur ou mot de passe incorrect'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+
+
+# ========== 2. INSCRIPTION ==========
+class RegisterView(APIView):
+    permission_classes = []  # Pas besoin d'authentification
+    
+    def post(self, request):
+        # Vérifier si l'utilisateur existe déjà
+        username = request.data.get('username')
+        email = request.data.get('email')
+        
+        if Utilisateur.objects.filter(username=username).exists():
+            return Response({
+                'error': 'Ce nom d\'utilisateur existe déjà'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if Utilisateur.objects.filter(email=email).exists():
+            return Response({
+                'error': 'Cet email est déjà utilisé'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Créer l'utilisateur (par défaut rôle chauffeur)
+        serializer = UtilisateurSerializer(data={
+            'username': username,
+            'email': email,
+            'first_name': request.data.get('first_name', ''),
+            'last_name': request.data.get('last_name', ''),
+            'role': 'chauffeur',  # Par défaut chauffeur
+            'telephone': request.data.get('telephone', ''),
+            'mot_de_passe': request.data.get('password')
+        })
+        
+        if serializer.is_valid():
+            user = serializer.save()
+            
+            # Générer les tokens
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'success': True,
+                'message': 'Inscription réussie',
+                'access_token': str(refresh.access_token),
+                'refresh_token': str(refresh),
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'role': user.role,
+                    'nom': user.first_name,
+                    'prenom': user.last_name,
+                }
+            }, status=status.HTTP_201_CREATED)
+        
+        return Response({
+            'error': 'Données invalides',
+            'details': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ========== 3. MOT DE PASSE OUBLIÉ - Étape 1 ==========
+class PasswordResetRequestView(APIView):
+    permission_classes = []
+    
+    def post(self, request):
+        email = request.data.get('email')
+        
+        if not email:
+            return Response({
+                'error': 'Veuillez fournir votre email'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = Utilisateur.objects.get(email=email)
+            
+            # Générer un code de réinitialisation (6 chiffres)
+            reset_code = str(random.randint(100000, 999999))
+            
+            # Stocker le code en session ou en cache (ici on utilise une variable simple)
+            # En production, utilisez Redis ou un modèle dédié
+            request.session['reset_code'] = reset_code
+            request.session['reset_email'] = email
+            
+            # Envoyer l'email avec le code
+            send_mail(
+                subject='Réinitialisation de votre mot de passe',
+                message=f"""
+                Bonjour {user.username},
+                
+                Vous avez demandé la réinitialisation de votre mot de passe.
+                Voici votre code de vérification : {reset_code}
+                
+                Ce code est valable pendant 15 minutes.
+                
+                Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.
+                
+                Cordialement,
+                L'équipe Coopérative Transport
+                """,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+            
+            return Response({
+                'success': True,
+                'message': 'Un code de réinitialisation a été envoyé à votre email',
+                'email': email
+            })
+            
+        except Utilisateur.DoesNotExist:
+            # Pour des raisons de sécurité, on retourne le même message
+            return Response({
+                'success': True,
+                'message': 'Si cet email existe, un code de réinitialisation a été envoyé'
+            })
+
+
+# ========== 4. MOT DE PASSE OUBLIÉ - Étape 2 (Confirmation) ==========
+class PasswordResetConfirmView(APIView):
+    permission_classes = []
+    
+    def post(self, request):
+        email = request.data.get('email')
+        code = request.data.get('code')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+        
+        # Validation
+        if not all([email, code, new_password, confirm_password]):
+            return Response({
+                'error': 'Tous les champs sont requis'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if new_password != confirm_password:
+            return Response({
+                'error': 'Les mots de passe ne correspondent pas'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if len(new_password) < 6:
+            return Response({
+                'error': 'Le mot de passe doit contenir au moins 6 caractères'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Vérifier le code (en production, vérifiez avec session/cache)
+        stored_code = request.session.get('reset_code')
+        stored_email = request.session.get('reset_email')
+        
+        if not stored_code or not stored_email:
+            return Response({
+                'error': 'Aucune demande de réinitialisation en cours'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if stored_email != email or stored_code != code:
+            return Response({
+                'error': 'Code invalide ou expiré'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = Utilisateur.objects.get(email=email)
+            user.set_password(new_password)
+            user.save()
+            
+            # Nettoyer la session
+            del request.session['reset_code']
+            del request.session['reset_email']
+            
+            return Response({
+                'success': True,
+                'message': 'Mot de passe réinitialisé avec succès'
+            })
+            
+        except Utilisateur.DoesNotExist:
+            return Response({
+                'error': 'Utilisateur non trouvé'
+            }, status=status.HTTP_404_NOT_FOUND)
+
 
 class VehiculeViewSet(viewsets.ModelViewSet):
     queryset = Vehicule.objects.all()
