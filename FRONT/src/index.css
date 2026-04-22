@@ -1,3 +1,228 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-xl hover:shadow-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 font-medium;
+  }
+  .btn-secondary {
+    @apply bg-gray-200 text-gray-800 px-4 py-2 rounded-xl hover:bg-gray-300 transition-all duration-200 font-medium;
+  }
+  .input-field {
+    @apply w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all;
+  }
+  .card {
+    @apply bg-white rounded-2xl shadow-lg border border-gray-100 p-6;
+  }
+}
+
+/* ========== ANIMATIONS ========== */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.02); opacity: 0.9; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+/* Classes d'animation */
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-fadeInUp {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+.animate-slideIn {
+  animation: slideIn 0.4s ease-out forwards;
+  opacity: 0;
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.4s ease-out forwards;
+  opacity: 0;
+}
+
+.animate-pulse-slow {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-bounce-slow {
+  animation: bounce 1.5s ease-in-out infinite;
+}
+
+/* Skeleton loading */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 1000px 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ========== SCROLLBAR ========== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
+
+/* ========== TRANSITIONS GLOBALES ========== */
+* {
+  transition: all 0.2s ease;
+}
+
+/* ========== CARD HOVER EFFECT ========== */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+/* ========== GRADIENT TEXT ========== */
+.gradient-text {
+  @apply bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent;
+}
+
+/* ========== STATS CARD STYLES ========== */
+.stat-card {
+  @apply relative overflow-hidden rounded-2xl p-6 text-white shadow-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl cursor-pointer;
+}
+
+.stat-card-green {
+  @apply bg-gradient-to-br from-green-500 to-green-600;
+}
+
+.stat-card-red {
+  @apply bg-gradient-to-br from-red-500 to-red-600;
+}
+
+.stat-card-blue {
+  @apply bg-gradient-to-br from-blue-500 to-blue-600;
+}
+
+.stat-card-purple {
+  @apply bg-gradient-to-br from-purple-500 to-purple-600;
+}
+
+.stat-card-orange {
+  @apply bg-gradient-to-br from-orange-500 to-orange-600;
+}
+
+/* Circle decoration for stat cards */
+.stat-card-circle {
+  @apply absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 transition-transform duration-700;
+}
+
+.group:hover .stat-card-circle {
+  transform: scale(1.5);
+}
+
+/* ========== PROGRESS BAR ========== */
+.progress-bar {
+  @apply w-full bg-white/30 rounded-full overflow-hidden;
+}
+
+.progress-fill {
+  @apply h-full bg-white rounded-full transition-all duration-700;
+}
+
+/* ========== TABLE STYLES ========== */
+.table-row-hover {
+  @apply transition-all duration-300;
+}
+
+.table-row-hover:hover {
+  @apply bg-gradient-to-r from-blue-50 to-transparent;
+}
+
+/* ========== AVATAR STYLES ========== */
+.avatar {
+  @apply w-8 h-8 rounded-full bg-gradient-to-r from-blue-400 to-blue-600 flex items-center justify-center text-white text-xs font-bold shadow-md;
+}
+
+.avatar-lg {
+  @apply w-10 h-10 rounded-full bg-gradient-to-r from-blue-400 to-blue-600 flex items-center justify-center text-white text-sm font-bold shadow-md;
+}
+
+.avatar-xl {
+  @apply w-12 h-12 rounded-full bg-gradient-to-r from-blue-400 to-blue-600 flex items-center justify-center text-white text-base font-bold shadow-md;
+}
+
+/* ========== BADGE STYLES ========== */
+.badge-success {
+  @apply px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700;
+}
+
+.badge-warning {
+  @apply px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700;
+}
+
+.badge-danger {
+  @apply px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700;
+}
+
+.badge-info {
+  @apply px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700;
+}
+
+/* ========== RESPONSIVE UTILITIES ========== */
+@media (max-width: 768px) {
+  .stat-card {
+    @apply p-4;
+  }
+  .stat-card .text-3xl {
+    @apply text-2xl;
+  }
+}

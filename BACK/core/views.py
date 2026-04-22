@@ -1,128 +1,148 @@
 from django.shortcuts import render
-from rest_framework.decorators import action
-from rest_framework.decorators import api_view
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response 
 from rest_framework import viewsets, status, generics 
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.db.models import Sum, Count, Q, Avg
 from django.utils import timezone
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from .models import *
 from .serializers import *
 from .permissions import *
 from rest_framework.views import APIView 
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import authenticate
 from django.core.mail import send_mail
 from django.conf import settings
-from django.contrib.auth.tokens import default_token_generator
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.utils.encoding import force_bytes, force_str
-from .models import Utilisateur
-from .serializers import UtilisateurSerializer
 import random
+import calendar
 
-# Create your views here.
-
+# ========== TEST API ==========
 @api_view(['GET'])
 def test_api(request):
-    return Response({"message": "Hello from Django!"}) 
+    return Response({"message": "API CoopTransport fonctionne correctement!"})
 
+# ========== UTILISATEURS ==========
 class UtilisateurViewSet(viewsets.ModelViewSet):
     queryset = Utilisateur.objects.all()
     serializer_class = UtilisateurSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrReadOnly] 
+    permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if self.request.user.role == 'chauffeur':
+        if hasattr(self.request.user, 'role') and self.request.user.role == 'chauffeur':
             queryset = queryset.filter(id=self.request.user.id)
-        return queryset 
+        return queryset
     
     @action(detail=True, methods=['get'])
     def trajets(self, request, pk=None):
         chauffeur = self.get_object()
         trajets = Trajet.objects.filter(chauffeur=chauffeur)
         serializer = TrajetSerializer(trajets, many=True)
-        return Response(serializer.data) 
+        return Response(serializer.data)
 
-# ========== 1. LOGIN ==========
+# ========== LOGIN ==========
 class LoginView(APIView):
-    permission_classes = []  # Pas besoin d'authentification
-    
+    permission_classes = [AllowAny]
+
     def post(self, request):
         username = request.data.get('username')
         password = request.data.get('password')
-        
+
         if not username or not password:
             return Response({
-                'error': 'Veuillez fournir nom d\'utilisateur et mot de passe'
+                'success': False,
+                'error': 'Nom d\'utilisateur et mot de passe requis'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        user = authenticate(username=username, password=password)
-        
-        if user and user.est_actif:
-            refresh = RefreshToken.for_user(user)
+
+        try:
+            user = Utilisateur.objects.get(username=username)
             
+            if not user.est_actif:
+                return Response({
+                    'success': False,
+                    'error': 'Votre compte est désactivé. Contactez l\'administrateur.'
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if user.check_password(password):
+                refresh = RefreshToken.for_user(user)
+                
+                return Response({
+                    'success': True,
+                    'access_token': str(refresh.access_token),
+                    'refresh_token': str(refresh),
+                    'user': {
+                        'id': user.id,
+                        'username': user.username,
+                        'email': user.email,
+                        'role': user.role,
+                        'nom': user.last_name,
+                        'prenom': user.first_name,
+                        'telephone': user.telephone,
+                        'est_actif': user.est_actif
+                    }
+                }, status=status.HTTP_200_OK)
+
             return Response({
-                'success': True,
-                'access_token': str(refresh.access_token),
-                'refresh_token': str(refresh),
-                'user': {
-                    'id': user.id,
-                    'username': user.username,
-                    'email': user.email,
-                    'role': user.role,
-                    'nom': user.first_name,
-                    'prenom': user.last_name,
-                }
-            })
-        elif user and not user.est_actif:
-            return Response({
-                'error': 'Votre compte est désactivé. Contactez l\'administrateur.'
-            }, status=status.HTTP_403_FORBIDDEN)
-        else:
-            return Response({
+                'success': False,
                 'error': 'Nom d\'utilisateur ou mot de passe incorrect'
             }, status=status.HTTP_401_UNAUTHORIZED)
 
+        except Utilisateur.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Nom d\'utilisateur ou mot de passe incorrect'
+            }, status=status.HTTP_401_UNAUTHORIZED)
 
-# ========== 2. INSCRIPTION ==========
+# ========== INSCRIPTION ==========
 class RegisterView(APIView):
-    permission_classes = []  # Pas besoin d'authentification
-    
+    permission_classes = [AllowAny]
+
     def post(self, request):
-        # Vérifier si l'utilisateur existe déjà
         username = request.data.get('username')
         email = request.data.get('email')
-        
+        password = request.data.get('password')
+        first_name = request.data.get('first_name', '')
+        last_name = request.data.get('last_name', '')
+        telephone = request.data.get('telephone', '')
+
+        if not username or not email or not password:
+            return Response({
+                'success': False,
+                'error': 'Username, email et mot de passe sont requis'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(password) < 6:
+            return Response({
+                'success': False,
+                'error': 'Le mot de passe doit contenir au moins 6 caractères'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         if Utilisateur.objects.filter(username=username).exists():
             return Response({
+                'success': False,
                 'error': 'Ce nom d\'utilisateur existe déjà'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         if Utilisateur.objects.filter(email=email).exists():
             return Response({
+                'success': False,
                 'error': 'Cet email est déjà utilisé'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Créer l'utilisateur (par défaut rôle chauffeur)
-        serializer = UtilisateurSerializer(data={
-            'username': username,
-            'email': email,
-            'first_name': request.data.get('first_name', ''),
-            'last_name': request.data.get('last_name', ''),
-            'role': 'chauffeur',  # Par défaut chauffeur
-            'telephone': request.data.get('telephone', ''),
-            'mot_de_passe': request.data.get('password')
-        })
-        
-        if serializer.is_valid():
-            user = serializer.save()
-            
-            # Générer les tokens
+
+        try:
+            user = Utilisateur.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+                telephone=telephone,
+                role='chauffeur',
+                est_actif=True
+            )
+
             refresh = RefreshToken.for_user(user)
-            
+
             return Response({
                 'success': True,
                 'message': 'Inscription réussie',
@@ -133,20 +153,46 @@ class RegisterView(APIView):
                     'username': user.username,
                     'email': user.email,
                     'role': user.role,
-                    'nom': user.first_name,
-                    'prenom': user.last_name,
+                    'nom': user.last_name,
+                    'prenom': user.first_name,
+                    'telephone': user.telephone,
+                    'est_actif': user.est_actif
                 }
             }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+# ========== RAFRAÎCHIR TOKEN ==========
+class TokenRefreshView(APIView):
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
         
-        return Response({
-            'error': 'Données invalides',
-            'details': serializer.errors
-        }, status=status.HTTP_400_BAD_REQUEST)
+        if not refresh_token:
+            return Response({
+                'detail': 'Refresh token required',
+                'code': 'token_not_valid'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        try:
+            refresh = RefreshToken(refresh_token)
+            return Response({
+                'access': str(refresh.access_token)
+            }, status=status.HTTP_200_OK)
+        except Exception:
+            return Response({
+                'detail': 'Token is invalid or expired',
+                'code': 'token_not_valid'
+            }, status=status.HTTP_401_UNAUTHORIZED)
 
-
-# ========== 3. MOT DE PASSE OUBLIÉ - Étape 1 ==========
-class PasswordResetRequestView(APIView):
-    permission_classes = []
+# ========== MOT DE PASSE OUBLIÉ ==========
+class PasswordResetView(APIView):
+    permission_classes = [AllowAny]
     
     def post(self, request):
         email = request.data.get('email')
@@ -158,53 +204,29 @@ class PasswordResetRequestView(APIView):
         
         try:
             user = Utilisateur.objects.get(email=email)
-            
-            # Générer un code de réinitialisation (6 chiffres)
             reset_code = str(random.randint(100000, 999999))
             
-            # Stocker le code en session ou en cache (ici on utilise une variable simple)
-            # En production, utilisez Redis ou un modèle dédié
             request.session['reset_code'] = reset_code
             request.session['reset_email'] = email
+            request.session.set_expiry(900)
             
-            # Envoyer l'email avec le code
-            send_mail(
-                subject='Réinitialisation de votre mot de passe',
-                message=f"""
-                Bonjour {user.username},
-                
-                Vous avez demandé la réinitialisation de votre mot de passe.
-                Voici votre code de vérification : {reset_code}
-                
-                Ce code est valable pendant 15 minutes.
-                
-                Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.
-                
-                Cordialement,
-                L'équipe Coopérative Transport
-                """,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-                fail_silently=False,
-            )
+            print(f"Code de réinitialisation pour {email}: {reset_code}")
             
             return Response({
                 'success': True,
                 'message': 'Un code de réinitialisation a été envoyé à votre email',
                 'email': email
-            })
+            }, status=status.HTTP_200_OK)
             
         except Utilisateur.DoesNotExist:
-            # Pour des raisons de sécurité, on retourne le même message
             return Response({
                 'success': True,
-                'message': 'Si cet email existe, un code de réinitialisation a été envoyé'
-            })
+                'message': 'Un code de réinitialisation a été envoyé à votre email',
+                'email': email
+            }, status=status.HTTP_200_OK)
 
-
-# ========== 4. MOT DE PASSE OUBLIÉ - Étape 2 (Confirmation) ==========
 class PasswordResetConfirmView(APIView):
-    permission_classes = []
+    permission_classes = [AllowAny]
     
     def post(self, request):
         email = request.data.get('email')
@@ -212,7 +234,6 @@ class PasswordResetConfirmView(APIView):
         new_password = request.data.get('new_password')
         confirm_password = request.data.get('confirm_password')
         
-        # Validation
         if not all([email, code, new_password, confirm_password]):
             return Response({
                 'error': 'Tous les champs sont requis'
@@ -228,7 +249,6 @@ class PasswordResetConfirmView(APIView):
                 'error': 'Le mot de passe doit contenir au moins 6 caractères'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Vérifier le code (en production, vérifiez avec session/cache)
         stored_code = request.session.get('reset_code')
         stored_email = request.session.get('reset_email')
         
@@ -247,25 +267,90 @@ class PasswordResetConfirmView(APIView):
             user.set_password(new_password)
             user.save()
             
-            # Nettoyer la session
             del request.session['reset_code']
             del request.session['reset_email']
             
             return Response({
                 'success': True,
                 'message': 'Mot de passe réinitialisé avec succès'
-            })
+            }, status=status.HTTP_200_OK)
             
         except Utilisateur.DoesNotExist:
             return Response({
                 'error': 'Utilisateur non trouvé'
             }, status=status.HTTP_404_NOT_FOUND)
 
-
+# ========== VÉHICULES ==========
 class VehiculeViewSet(viewsets.ModelViewSet):
     queryset = Vehicule.objects.all()
     serializer_class = VehiculeSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if hasattr(self.request.user, 'role') and self.request.user.role == 'chauffeur':
+            affectations = Affectation.objects.filter(
+                chauffeur=self.request.user, 
+                date_fin__isnull=True
+            ).values_list('vehicule_id', flat=True)
+            queryset = queryset.filter(Q(etat='disponible') | Q(id__in=affectations))
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            if serializer.is_valid():
+                self.perform_create(serializer)
+                return Response({
+                    'success': True,
+                    'message': 'Véhicule créé avec succès',
+                    'data': serializer.data
+                }, status=status.HTTP_201_CREATED)
+            return Response({
+                'success': False,
+                'error': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            if serializer.is_valid():
+                self.perform_update(serializer)
+                return Response({
+                    'success': True,
+                    'message': 'Véhicule modifié avec succès',
+                    'data': serializer.data
+                })
+            return Response({
+                'success': False,
+                'error': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            instance.delete()
+            return Response({
+                'success': True,
+                'message': 'Véhicule supprimé avec succès'
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['get'])
     def historique_trajets(self, request, pk=None):
@@ -280,73 +365,188 @@ class VehiculeViewSet(viewsets.ModelViewSet):
         depenses = Depense.objects.filter(vehicule=vehicule)
         serializer = DepenseSerializer(depenses, many=True)
         return Response(serializer.data)
-    
 
-
+# ========== TRAJETS ==========
 class TrajetViewSet(viewsets.ModelViewSet):
-    queryset = Trajet.objects.all() 
+    queryset = Trajet.objects.all().order_by('-date', '-heure_depart')
     serializer_class = TrajetSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrCaissier]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if hasattr(self.request.user, 'role') and self.request.user.role == 'chauffeur':
+            queryset = queryset.filter(chauffeur=self.request.user)
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            if serializer.is_valid():
+                self.perform_create(serializer)
+                return Response({
+                    'success': True,
+                    'message': 'Trajet créé avec succès',
+                    'data': serializer.data
+                }, status=status.HTTP_201_CREATED)
+            return Response({
+                'success': False,
+                'error': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            if serializer.is_valid():
+                self.perform_update(serializer)
+                return Response({
+                    'success': True,
+                    'message': 'Trajet modifié avec succès',
+                    'data': serializer.data
+                })
+            return Response({
+                'success': False,
+                'error': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            instance.delete()
+            return Response({
+                'success': True,
+                'message': 'Trajet supprimé avec succès'
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     def perform_create(self, serializer):
         trajet = serializer.save()
-        # Mettre à jour l'état du véhicule
-        trajet.vehicule.etat = 'en_trajet'
-        trajet.vehicule.save()
-
-
-        # Mettre à jour ou créer la recette journalière
-        recette_jour, _ = RecetteJournaliere.objects.__getitem__or_create(date=trajet.date)
-        recette_jour.calculer_recette() 
+        vehicule = trajet.vehicule
+        vehicule.etat = 'en_trajet'
+        vehicule.save()
+        
+        recette_jour, _ = RecetteJournaliere.objects.get_or_create(date=trajet.date)
+        recette_jour.calculer_recette()
     
     def perform_update(self, serializer):
         trajet = serializer.save()
-        if trajet.statut == 'termine':
-            trajet.vehicule.etat = 'disponible'
-            trajet.vehicule.save()
-        # Recalculer les recettes
-        recette_jour = RecetteJournaliere.objects.get_or_create(date=trajet.date)[0]
+        if trajet.status == 'termine':
+            vehicule = trajet.vehicule
+            vehicule.etat = 'disponible'
+            vehicule.save()
+        
+        recette_jour, _ = RecetteJournaliere.objects.get_or_create(date=trajet.date)
         recette_jour.calculer_recette()
 
-    
+    @action(detail=False, methods=['get'])
+    def recent(self, request):
+        trajets = self.get_queryset().filter(status='termine')[:5]
+        serializer = self.get_serializer(trajets, many=True)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['get'])
     def par_periode(self, request):
         debut = request.query_params.get('debut')
         fin = request.query_params.get('fin')
-
+        queryset = self.get_queryset()
         if debut and fin:
-            trajets = self.queryset.filter(date__range=[debut, fin])
-        else:
-            trajets = self.queryset
-        
-        serializer = self.get_serializer(trajets, many=True)
-        return Response(serializer.data) 
+            queryset = queryset.filter(date__range=[debut, fin])
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
     
     @action(detail=False, methods=['get']) 
     def statistiques(self, request):
         mois = int(request.query_params.get('mois', timezone.now().month))
-        annee = int(request.query_params.get('annee', timezone.now().year)) 
-
-        trajets = Trajet.objects.filter(date__year=annee, date__month=mois, statut='termine')
-
+        annee = int(request.query_params.get('annee', timezone.now().year))
+        trajets = Trajet.objects.filter(date__year=annee, date__month=mois, status='termine')
         stats = {
             'total_trajets': trajets.count(),
-            'total_passagers': trajets.aggregate(Sum('nombre_passagers'))['nombre_passagers__sum'] or o,
-            'recettes_totales': sum(t.recette() for t in trajets),
+            'total_passagers': trajets.aggregate(Sum('nombre_passagers'))['nombre_passagers__sum'] or 0,
+            'recettes_totales': float(sum(t.recette() for t in trajets)),
             'destination_populaire': trajets.values('destination').annotate(count=Count('id')).order_by('-count').first(),
-            'moyenne_passagers_par_trajet': trajets.aggregate(Avg('nombre_passagers'))['nombre_passagers__avg'] or 0,
+            'moyenne_passagers_par_trajet': float(trajets.aggregate(Avg('nombre_passagers'))['nombre_passagers__avg'] or 0),
         }
         return Response(stats)
 
+# ========== DÉPENSES ==========
 class DepenseViewSet(viewsets.ModelViewSet):
-    queryset = Depense.objects.all()
+    queryset = Depense.objects.all().order_by('-date')
     serializer_class = DepenseSerializer 
-    permission_classes = [IsAuthenticated, IsAdminOrCaissier]
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            if serializer.is_valid():
+                self.perform_create(serializer)
+                return Response({
+                    'success': True,
+                    'message': 'Dépense créée avec succès',
+                    'data': serializer.data
+                }, status=status.HTTP_201_CREATED)
+            return Response({
+                'success': False,
+                'error': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            if serializer.is_valid():
+                self.perform_update(serializer)
+                return Response({
+                    'success': True,
+                    'message': 'Dépense modifiée avec succès',
+                    'data': serializer.data
+                })
+            return Response({
+                'success': False,
+                'error': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            instance.delete()
+            return Response({
+                'success': True,
+                'message': 'Dépense supprimée avec succès'
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     def perform_create(self, serializer):
         depense = serializer.save()
-
-        # Mettre à jour les dépenses journalières
         depense_jour, _ = DepenseJournaliere.objects.get_or_create(date=depense.date)
         depense_jour.calculer_depenses()
     
@@ -356,36 +556,41 @@ class DepenseViewSet(viewsets.ModelViewSet):
         annee = int(request.query_params.get('annee', timezone.now().year)) 
         depenses = Depense.objects.filter(date__year=annee, date__month=mois)
         categories = {} 
-
         for type_choice in Depense.TYPE_CHOICES:
             type_key = type_choice[0]
             total = depenses.filter(type=type_key).aggregate(Sum('montant'))['montant__sum'] or 0
-            categories[type_key] = total 
-        
-        return Response(categories) 
+            categories[type_key] = float(total) 
+        return Response(categories)
 
-class DashboardView(generics.GenericAPIView):
+# ========== DASHBOARD ==========
+class DashboardView(APIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = DashboardSerializer
 
     def get(self, request):
         today = timezone.now().date()
-        start_of_month = today.replace(day=1) 
+        start_of_month = today.replace(day=1)
 
-        # Deonnées du jour 
-        trajets_jour = Trajet.objects.filter(date=today, statut='termine')
+        trajets_jour = Trajet.objects.filter(date=today, status='termine')
         depenses_jour = Depense.objects.filter(date=today)
+        recettes_jour = float(sum(t.recette() for t in trajets_jour))
+        depenses_jour_total = float(depenses_jour.aggregate(Sum('montant'))['montant__sum'] or 0)
 
-        recettes_jour = sum(t.recette() for t in trajets_jour)
-        depenses_jour_total = depenses_jour.aggregate(Sum('montant'))['montant_sum'] or 0
+        trajets_mois = Trajet.objects.filter(date__gte=start_of_month, status='termine')
+        depenses_mois = Depense.objects.filter(date__gte=start_of_month)
+        recettes_mois = float(sum(t.recette() for t in trajets_mois))
+        depenses_mois_total = float(depenses_mois.aggregate(Sum('montant'))['montant__sum'] or 0)
 
-        # Données du mois
-        trajets_mois = Trajet.objects.filter(date__gte=start_of_month, statut='termine')
-        depenses_mois = Depense.objects.filter(date__gte=start_of_month) 
-
-        recettes_mois = sum(t.recette() for t in trajets_mois)
-        depenses_mois_total = depenses_mois.aggregate(Sum('montant'))['montant__sum'] or 0 
-
+        jours_fr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+        chart_data = []
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            trajets_day = Trajet.objects.filter(date=day, status='termine')
+            depenses_day = Depense.objects.filter(date=day)
+            chart_data.append({
+                'day': jours_fr[day.weekday()],
+                'recettes': float(sum(t.recette() for t in trajets_day)),
+                'depenses': float(depenses_day.aggregate(Sum('montant'))['montant__sum'] or 0)
+            })
 
         data = {
             'recettes_jour': recettes_jour,
@@ -400,187 +605,63 @@ class DashboardView(generics.GenericAPIView):
             'passagers_total_mois': trajets_mois.aggregate(Sum('nombre_passagers'))['nombre_passagers__sum'] or 0,
             'chauffeurs_actifs': Utilisateur.objects.filter(role='chauffeur', est_actif=True).count(),
             'vehicules_disponibles': Vehicule.objects.filter(etat='disponible').count(),
-
+            'chart_data': chart_data
         }
+        return Response(data)
 
-        serializer = DashboardSerializer(data)
-        return Response(serializer.data) 
+# ========== STATISTIQUES HEBDOMADAIRES ==========
+class StatsHebdomadairesView(APIView):
+    permission_classes = [IsAuthenticated]
 
-class RapportView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated, IsAdminOrCaissier] 
-
-    def get(self, request, periode):
-        today = timezone.now().date()
-
-        if periode == 'journalier':
-            date = request.query_params.get('date', today)
-            return self.rapport_journalier(date)
-        elif periode == 'hebdomadaire':
-            date = request.query_params.get('date', today)
-            return self.rapport_hebdomadaire(date)
-        elif periode == 'mensuel':
-            mois = int(request.query_params.get('mois', today.month))
-            annee = int(request.query_params.get('annee', today.year))
-            return self.rapport_mensuel(mois, annee) 
-        
-        elif periode == 'annuel':
-            annee = int(request.query_params.get('annee', today.year))
-            return self.rapport_annuel(annee)
-        else:
-            return Response({'error': 'Période invalide'}, status=400) 
-
-    def rapport_journalier(self, date):
-        trajets = Trajet.objects.filter(date=date, statut='termine')
-        depenses = Depense.objects.filter(date=date)
-        recettes = sum(t.recette() for t in trajets) 
-        depenses_total = depenses.aggregate(Sum('montant'))['montant__sum'] or 0
-
-        return Response({
-            'date': date,
-            'recettes': recettes,
-            'depenses': depenses_total,
-            'benefice': recettes - depenses_total,
-            'nombre_trajets': trajets.count(),
-            'nombre_passagers': trajets.aggregate(Sum('nombre_passagers'))['nombre_passagers__sum'] or 0,
-            'details_trajets': TrajetSerializer(trajets, many=True).data, 
-            'details_depenses': DepenseSerializer(depenses, many=True).data,
-        }) 
-    
-
-    def rapport_hebdomadaire(self, date):
-        # Calculer la semaine
-        start_of_week = date - timedelta(days=date.weekday()) 
-        end_of_week = start_of_week + timedelta(days=6)
-
-        trajets = Trajet.objects.filter(date__range=[start_of_week, end_of_week], statut='termine') 
-        depenses = Depense.objects.filter(date__range=[start_of_week, end_of_week]) 
-
-        recettes = sum(t.recette() for t in trajets)
-        depenses_total = depenses.aggregate(Sum('montant'))['montant__sum'] or 0
-
-        # Statistiques par jour 
-        stats_par_jour = {}
+    def get(self, request):
+        today = date.today()
+        start_of_week = today - timedelta(days=today.weekday())
+        jours_fr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+        weekly_stats = []
         for i in range(7):
-                jour = start_of_week + timedelta(days=i)
-                trajets_jour = trajets.filter(date=jour)
-                depenses_jour = depenses.filter(date=jour)
-                stats_par_jour[jour.isoformat()] = {
-                    'recettes': sum(t.recette() for t in trajets_jour),
-                    'depenses': depenses_jour.aggregate(Sum('montant'))['montant__sum'] or 0,
-                    'trajets': trajets_jour.count(),
-                }
-        return Response({
-             'debut_semaine': start_of_week,
-             'fin_semaine': end_of_week,
-             'recettes_totales': recettes,
-             'depenses_totales': depenses_total,
-             'benefice_total': recettes - depenses_total,
-             'stats_par_jour': stats_par_jour,})   
-    
-    def rapport_mensuel(self, mois, annee):
-        import calendar 
-        from datetime import date
+            day = start_of_week + timedelta(days=i)
+            trajets = Trajet.objects.filter(date=day, status='termine')
+            depenses = Depense.objects.filter(date=day)
+            weekly_stats.append({
+                'jour': jours_fr[i],
+                'recettes': float(sum(t.recette() for t in trajets)),
+                'depenses': float(depenses.aggregate(Sum('montant'))['montant__sum'] or 0),
+                'nombre_trajets': trajets.count()
+            })
+        return Response(weekly_stats)
 
-        dernier_jour = calendar.monthrange(annee, mois)[1]
-        start_date = date(annee, mois, 1) 
-        end_date = date(annee, mois, dernier_jour) 
-
-        trajets = Trajet.objects.filter(date__range=[start_date, end_date], statut='termine') 
-        depenses = Depense.objects.filter(date__range=[start_date, end_date]) 
-
-        recettes = sum(t.recette() for t in trajets) 
-        depenses_total = depenses.aggregate(Sum('montant'))['montant__sum'] or 0 
-
-        # Performance par véhicule 
-        performance_vehicules = []
-        for vehicule in Vehicule.objects.all():
-            trajets_vehicule = trajets.filter(vehicule=vehicule)
-            recettes_vehicule = sum(t.recette() for t in trajets_vehicule)
-            if recettes_vehicule > 0:
-                performance_vehicules.append({
-                    'vehicule': vehicule.immatriculation,
-                    'trajets': trajets_vehicule.count(),
-                    'recettes': recettes_vehicule,
-                }) 
-        
-        return Response({
-            'mois': mois,
-            'annee': annee,
-            'recettes_totales': recettes, 
-            'depenses_totales': depenses_total,
-            'benefice_total': recettes - depenses_total,
-            'nombre_trajets': trajets.count(),
-            'nombre_passagers': trajets.aggregate(Sum('nombre_passagers'))['nombre_passagers__sum'] or 0,
-            'performance_vehicules': performance_vehicules,
-            'details_depenses_par_type': DepenseViewSet().par_categorie(request=None).data,
-        })
-    
-    def rapport_annuel(self, annee):
-        start_date = date(annee, 1, 1)
-        end_date = date(annee, 12, 31)
-
-        trajets = Trajet.objects.filter(date__range=[start_date, end_date], statut='termine')
-        depenses = Depense.objects.filter(date__range=[start_date, end_date])
-
-        recettes = sum(t.recette() for t in trajets)
-        depenses_total = depenses.aggregate(Sum('montant'))['montant__sum'] or 0 
-
-        # Statistiques mensuelles
-        stats_mensuelles = {}
-        for mois in range(1, 13):
-            trajets_mois = trajets.filter(date__month=mois)
-            depenses_mois = depenses.filter(date__month=mois)
-            recettes_mois = sum(t.recette() for t in trajets_mois)
-            stats_mensuelles[mois] = {
-                'recettes': recettes_mois,
-                'depenses': depenses_mois.aggregate(Sum('montant'))['montant__sum'] or 0,
-                'benefice': recettes_mois - (depenses_mois.aggregate(Sum('montant'))['montant__sum'] or 0), 
-                'trajets': trajets_mois.count(),
-            }
-        return Response({
-            'annee': annee,
-            'recettes_totales': recettes,
-            'depenses_totales': depenses_total,
-            'benefice_total': recettes - depenses_total,
-            'stats_mensuelles': stats_mensuelles,
-        })
-
-
-class CommissionView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated, IsAdminOrCaissier]
+# ========== COMMISSIONS ==========
+class CommissionView(APIView):
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         chauffeur_id = request.query_params.get('chauffeur')
         if chauffeur_id:
             commissions = CommissionChauffeur.objects.filter(chauffeur_id=chauffeur_id)
         else:
-            commissions = CommissionChauffeur.objects.all()
+            commissions = CommissionChauffeur.objects.all().order_by('-periode_debut')
         serializer = CommissionChauffeurSerializer(commissions, many=True)
         return Response(serializer.data)
-    
+
     def post(self, request):
-        """Calculer les commissions pour une période"""
         mois = int(request.data.get('mois', timezone.now().month))
         annee = int(request.data.get('annee', timezone.now().year))
-        taux = float(request.data.get('taux', 10)) 
+        taux = float(request.data.get('taux', 10))
 
+        dernier_jour = calendar.monthrange(annee, mois)[1]
         start_date = date(annee, mois, 1)
-        if mois == 12:
-            end_date = date(annee+1, 1, 1) - timedelta(days=1)
-        else:
-            end_date = date(annee, mois+1, 1) - timedelta(days=1)
-        
-        chauffeurs = Utilisateur.objects.filter(role='chauffeur', est_actif=True)
+        end_date = date(annee, mois, dernier_jour)
 
+        chauffeurs = Utilisateur.objects.filter(role='chauffeur', est_actif=True)
         commissions_crees = []
 
         for chauffeur in chauffeurs:
             trajets = Trajet.objects.filter(
                 chauffeur=chauffeur,
                 date__range=[start_date, end_date],
-                statut='termine'
+                status='termine'
             )
-            recettes = sum(t.recette() for t in trajets)
+            recettes = float(sum(t.recette() for t in trajets))
 
             commission, created = CommissionChauffeur.objects.get_or_create(
                 chauffeur=chauffeur,
@@ -593,13 +674,93 @@ class CommissionView(generics.GenericAPIView):
             )
 
             if not created:
-                commision.recettes_realisees = recettes
+                commission.recettes_realisees = recettes
                 commission.taux_commission = taux
-            
+
             commission.calculer_commission()
             commission.save()
             commissions_crees.append(commission)
+
         serializer = CommissionChauffeurSerializer(commissions_crees, many=True)
-        return Response(serializer.data, status=201)
-            
+        return Response({
+            'success': True,
+            'message': 'Commissions calculées avec succès',
+            'data': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    def put(self, request, pk=None):
+        try:
+            commission = CommissionChauffeur.objects.get(pk=pk)
+            commission.est_paye = True
+            commission.save()
+            return Response({
+                'success': True,
+                'message': 'Commission marquée comme payée'
+            }, status=status.HTTP_200_OK)
+        except CommissionChauffeur.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Commission non trouvée'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+# ========== RAPPORTS ==========
+class ReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        periode = request.query_params.get('periode', 'mois')
+        today = date.today()
         
+        if periode == 'semaine':
+            start_date = today - timedelta(days=today.weekday())
+            end_date = start_date + timedelta(days=6)
+        elif periode == 'mois':
+            start_date = today.replace(day=1)
+            end_date = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+        elif periode == 'annee':
+            start_date = date(today.year, 1, 1)
+            end_date = date(today.year, 12, 31)
+        else:
+            start_date_str = request.query_params.get('start_date')
+            end_date_str = request.query_params.get('end_date')
+            if start_date_str and end_date_str:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            else:
+                return Response({'error': 'Période invalide'}, status=400)
+
+        trajets = Trajet.objects.filter(date__range=[start_date, end_date], status='termine')
+        depenses = Depense.objects.filter(date__range=[start_date, end_date])
+
+        recettes_totales = float(sum(t.recette() for t in trajets))
+        depenses_totales = float(depenses.aggregate(Sum('montant'))['montant__sum'] or 0)
+        benefice_total = recettes_totales - depenses_totales
+
+        jours_fr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+        daily_stats = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            trajets_day = trajets.filter(date=current_date)
+            depenses_day = depenses.filter(date=current_date)
+            daily_stats.append({
+                'date': current_date.strftime('%Y-%m-%d'),
+                'jour': jours_fr[current_date.weekday()],
+                'recettes': float(sum(t.recette() for t in trajets_day)),
+                'depenses': float(depenses_day.aggregate(Sum('montant'))['montant__sum'] or 0),
+                'nombre_trajets': trajets_day.count()
+            })
+            current_date += timedelta(days=1)
+
+        return Response({
+            'periode': {
+                'debut': start_date.strftime('%Y-%m-%d'),
+                'fin': end_date.strftime('%Y-%m-%d')
+            },
+            'recettes_totales': recettes_totales,
+            'depenses_totales': depenses_totales,
+            'benefice_total': benefice_total,
+            'nombre_trajets': trajets.count(),
+            'nombre_passagers': trajets.aggregate(Sum('nombre_passagers'))['nombre_passagers__sum'] or 0,
+            'daily_stats': daily_stats
+        })
