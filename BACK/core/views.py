@@ -47,24 +47,38 @@ class LoginView(APIView):
     def post(self, request):
         username = request.data.get('username')
         password = request.data.get('password')
+        
+        print(f"[LOGIN] Tentative de connexion: username={username}")
 
-        if not username or not password:
+        # Validation des champs vides
+        if not username or not username.strip():
             return Response({
                 'success': False,
-                'error': 'Nom d\'utilisateur et mot de passe requis'
+                'error': 'Veuillez saisir votre nom d\'utilisateur'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not password:
+            return Response({
+                'success': False,
+                'error': 'Veuillez saisir votre mot de passe'
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = Utilisateur.objects.get(username=username)
+            print(f"[LOGIN] Utilisateur trouvé: {user.username}, role={user.role}")
             
+            # Vérifier si le compte est actif
             if not user.est_actif:
                 return Response({
                     'success': False,
-                    'error': 'Votre compte est désactivé. Contactez l\'administrateur.'
+                    'error': 'Votre compte est désactivé. Veuillez contacter l\'administrateur.'
                 }, status=status.HTTP_403_FORBIDDEN)
 
+            # Vérifier le mot de passe
             if user.check_password(password):
                 refresh = RefreshToken.for_user(user)
+                
+                print(f"[LOGIN] Connexion réussie pour {user.username}")
                 
                 return Response({
                     'success': True,
@@ -82,18 +96,21 @@ class LoginView(APIView):
                     }
                 }, status=status.HTTP_200_OK)
 
+            # Mot de passe incorrect
+            print(f"[LOGIN] Mot de passe incorrect pour {user.username}")
             return Response({
                 'success': False,
-                'error': 'Nom d\'utilisateur ou mot de passe incorrect'
+                'error': 'Mot de passe incorrect. Veuillez réessayer.'
             }, status=status.HTTP_401_UNAUTHORIZED)
 
         except Utilisateur.DoesNotExist:
+            print(f"[LOGIN] Utilisateur non trouvé: {username}")
             return Response({
                 'success': False,
-                'error': 'Nom d\'utilisateur ou mot de passe incorrect'
+                'error': 'Nom d\'utilisateur incorrect. Veuillez vérifier.'
             }, status=status.HTTP_401_UNAUTHORIZED)
-
-# ========== INSCRIPTION ==========
+            
+# ========== INSCRIPTION AVEC RÔLE ==========
 class RegisterView(APIView):
     permission_classes = [AllowAny]
 
@@ -104,7 +121,9 @@ class RegisterView(APIView):
         first_name = request.data.get('first_name', '')
         last_name = request.data.get('last_name', '')
         telephone = request.data.get('telephone', '')
+        role = request.data.get('role', 'chauffeur')  # Rôle par défaut: chauffeur
 
+        # Validation
         if not username or not email or not password:
             return Response({
                 'success': False,
@@ -129,6 +148,11 @@ class RegisterView(APIView):
                 'error': 'Cet email est déjà utilisé'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Vérifier si le rôle est valide
+        valid_roles = ['admin', 'caissier', 'chauffeur']
+        if role not in valid_roles:
+            role = 'chauffeur'
+
         try:
             user = Utilisateur.objects.create_user(
                 username=username,
@@ -137,7 +161,7 @@ class RegisterView(APIView):
                 first_name=first_name,
                 last_name=last_name,
                 telephone=telephone,
-                role='chauffeur',
+                role=role,
                 est_actif=True
             )
 

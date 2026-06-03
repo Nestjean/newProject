@@ -95,10 +95,10 @@ class Depense(models.Model):
     trajet = models.ForeignKey(Trajet, on_delete=models.SET_NULL, null=True, blank=True)
     description = models.TextField(blank=True)
     fournisseur = models.CharField(max_length=100, blank=True)
+    quantite = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Quantité en litres ou unités")
 
     def __str__(self):
         return f"{self.get_type_display()} - {self.montant} Ar"
-
 class RecetteJournaliere(models.Model):
     date = models.DateField(unique=True)
     montant_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)

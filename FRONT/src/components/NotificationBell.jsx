@@ -1,5 +1,5 @@
+// src/components/NotificationBell.jsx
 import React, { useState, useEffect } from 'react';
-import { BellIcon, XMarkIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
@@ -22,12 +22,10 @@ const NotificationBell = () => {
       setNotifications(response.data);
       setUnreadCount(response.data.filter(n => !n.read).length);
     } catch (error) {
-      // Données mockées
+      // Simuler des notifications
       const mockNotifs = [
-        { id: 1, title: 'Nouveau trajet planifié', message: 'Trajet Antananarivo → Toamasina', time: 'Il y a 5 min', read: false, type: 'trip', icon: '✈️' },
-        { id: 2, title: 'Commission payée', message: 'Votre commission d\'avril a été versée', time: 'Il y a 1 heure', read: false, type: 'payment', icon: '💰' },
-        { id: 3, title: 'Maintenance véhicule', message: 'Le véhicule 1234-TA nécessite une révision', time: 'Il y a 3 heures', read: true, type: 'alert', icon: '🔧' },
-        { id: 4, title: 'Bienvenue !', message: `Bienvenue ${user?.prenom || user?.username} sur CoopTransport`, time: 'Hier', read: true, type: 'welcome', icon: '👋' },
+        { id: 1, title: 'Nouveau trajet', message: 'Un nouveau trajet a été ajouté', time: 'Il y a 2 min', read: false, type: 'trip' },
+        { id: 2, title: 'Bienvenue', message: `Bienvenue ${user?.prenom || user?.username}`, time: 'Aujourd\'hui', read: false, type: 'welcome' }
       ];
       setNotifications(mockNotifs);
       setUnreadCount(mockNotifs.filter(n => !n.read).length);
@@ -35,128 +33,25 @@ const NotificationBell = () => {
   };
 
   const markAsRead = async (id) => {
-    try {
-      await api.patch(`/notifications/${id}/`, { read: true });
-      setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
-      setUnreadCount(prev => prev - 1);
-    } catch (error) {
-      setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
-      setUnreadCount(prev => prev - 1);
-    }
+    try { await api.patch(`/notifications/${id}/`, { read: true }); } catch(e) {}
+    setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
+    setUnreadCount(prev => prev - 1);
   };
 
   const markAllAsRead = async () => {
-    try {
-      await api.post('/notifications/mark-all-read/');
-      setNotifications(notifications.map(n => ({ ...n, read: true })));
-      setUnreadCount(0);
-      toast.success('Toutes les notifications marquées comme lues');
-    } catch (error) {
-      setNotifications(notifications.map(n => ({ ...n, read: true })));
-      setUnreadCount(0);
-    }
-  };
-
-  const getTypeStyles = (type) => {
-    const styles = {
-      trip: 'bg-blue-50 border-blue-200',
-      payment: 'bg-green-50 border-green-200',
-      alert: 'bg-red-50 border-red-200',
-      welcome: 'bg-purple-50 border-purple-200',
-      default: 'bg-gray-50 border-gray-200',
-    };
-    return styles[type] || styles.default;
-  };
-
-  const formatTime = (timeStr) => {
-    if (timeStr.includes('min')) return timeStr;
-    if (timeStr.includes('heure')) return timeStr;
-    if (timeStr === 'Hier') return timeStr;
-    return timeStr;
+    try { await api.post('/notifications/mark-all-read/'); } catch(e) {}
+    setNotifications(notifications.map(n => ({ ...n, read: true })));
+    setUnreadCount(0);
+    toast.success('Toutes les notifications marquées comme lues');
   };
 
   return (
     <div className="relative">
-      <button
-        onClick={() => setShowDropdown(!showDropdown)}
-        className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-all duration-200"
-      >
-        <BellIcon className="w-6 h-6" />
-        {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center animate-pulse">
-            {unreadCount > 9 ? '9+' : unreadCount}
-          </span>
-        )}
+      <button onClick={() => setShowDropdown(!showDropdown)} className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-full transition">
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+        {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>}
       </button>
-
-      {showDropdown && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)}></div>
-          <div className="absolute right-0 mt-2 w-96 bg-white rounded-2xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-fadeIn">
-            {/* Header */}
-            <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-gray-800">Notifications</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Vous avez {unreadCount} notification{unreadCount > 1 ? 's' : ''} non lue{unreadCount > 1 ? 's' : ''}</p>
-                </div>
-                {unreadCount > 0 && (
-                  <button onClick={markAllAsRead} className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
-                    <CheckIcon className="w-3 h-3" /> Tout marquer lu
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Liste des notifications */}
-            <div className="max-h-96 overflow-y-auto divide-y divide-gray-100">
-              {notifications.length === 0 ? (
-                <div className="p-8 text-center">
-                  <div className="text-4xl mb-2">🔔</div>
-                  <p className="text-gray-500 text-sm">Aucune notification</p>
-                </div>
-              ) : (
-                notifications.map(notif => (
-                  <div
-                    key={notif.id}
-                    className={`p-4 hover:bg-gray-50 cursor-pointer transition-all duration-200 ${!notif.read ? 'bg-blue-50/30' : ''}`}
-                    onClick={() => markAsRead(notif.id)}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${getTypeStyles(notif.type)}`}>
-                        {notif.icon || (notif.type === 'trip' ? '✈️' : notif.type === 'payment' ? '💰' : '🔔')}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-semibold text-gray-800">{notif.title}</p>
-                          {!notif.read && <span className="w-2 h-2 bg-blue-500 rounded-full"></span>}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">{notif.message}</p>
-                        <p className="text-xs text-gray-400 mt-2">{formatTime(notif.time)}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-3 text-center border-t border-gray-100 bg-gray-50">
-              <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">Voir toutes les notifications</button>
-            </div>
-          </div>
-        </>
-      )}
-
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
-        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
-        .animate-pulse { animation: pulse 1s ease-in-out infinite; }
-      `}</style>
+      {showDropdown && (<><div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)}></div><div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border z-50 overflow-hidden"><div className="p-4 border-b bg-gradient-to-r from-red-50 to-orange-50 flex justify-between items-center"><div><h3 className="font-bold">Notifications</h3><p className="text-xs text-gray-500">{unreadCount} non lue(s)</p></div>{unreadCount > 0 && <button onClick={markAllAsRead} className="text-xs text-red-600 hover:underline">Tout marquer lu</button>}</div><div className="max-h-96 overflow-y-auto">{notifications.length === 0 ? <div className="p-8 text-center text-gray-500">Aucune notification</div> : notifications.map(n => (<div key={n.id} onClick={() => markAsRead(n.id)} className={`p-4 border-b hover:bg-gray-50 cursor-pointer ${!n.read ? 'bg-red-50' : ''}`}><div className="flex justify-between"><p className="text-sm font-semibold">{n.title}</p>{!n.read && <span className="w-2 h-2 bg-red-500 rounded-full"></span>}</div><p className="text-xs text-gray-500 mt-1">{n.message}</p><p className="text-xs text-gray-400 mt-2">{n.time}</p></div>))}</div></div></>)}
     </div>
   );
 };
