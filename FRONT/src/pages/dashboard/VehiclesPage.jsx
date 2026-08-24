@@ -29,17 +29,17 @@ const VehiclesPage = () => {
 
   const marques = ['Toyota', 'Mercedes-Benz', 'Nissan', 'Hyundai', 'Renault', 'Mitsubishi', 'Peugeot', 'Citroën', 'Ford', 'Volkswagen', 'Mazda'];
   const modelesParMarque = {
-    'Toyota': ['Hiace', 'Dyna', 'Coaster', 'Land Cruiser', 'Hilux'],
-    'Mercedes-Benz': ['Sprinter', 'Vito', 'Citan', 'V-Class'],
-    'Nissan': ['Navara', 'Urvan', 'Patrol', 'Civilian'],
-    'Hyundai': ['Starex', 'H350', 'County', 'Grand Starex'],
-    'Renault': ['Trafic', 'Master', 'Kangoo'],
-    'Mitsubishi': ['L300', 'Delica', 'Canter', 'Pajero'],
-    'Peugeot': ['Boxer', 'Expert', 'Traveller'],
-    'Citroën': ['Jumper', 'Jumpy', 'Spacetourer'],
-    'Ford': ['Transit', 'Tourneo', 'Ranger'],
-    'Volkswagen': ['Crafter', 'Transporter', 'Multivan'],
-    'Mazda': ['BT-50', 'CX-5', 'CX-9']
+    'Toyota': ['Hiace', 'Dyna', 'Coaster', 'Land Cruiser', 'Hilux', 'Granvia', 'Quantum'],
+  'Mercedes-Benz': ['Sprinter', 'Vito', 'Citan', 'V-Class', 'Tourismo', 'Intouro', 'Crafter'],  
+  'Nissan': ['Navara', 'Urvan', 'Patrol', 'Civilian', 'Cabstar', 'Atlas'],
+  'Hyundai': ['Starex', 'H350', 'County', 'Grand Starex', 'Universe', 'Mighty'],
+  'Renault': ['Trafic', 'Master', 'Kangoo', 'Alaskan', 'Maxity'],
+  'Mitsubishi': ['L300', 'Delica', 'Canter', 'Pajero', 'Fuso', 'Rosa'],
+  'Peugeot': ['Boxer', 'Expert', 'Traveller', 'Partner', 'Rifter'],
+  'Citroën': ['Jumper', 'Jumpy', 'Spacetourer', 'Berlingo'],
+  'Ford': ['Transit', 'Tourneo', 'Ranger', 'F-150', 'E-Series'],
+  'Volkswagen': ['Crafter', 'Transporter', 'Multivan', 'Amarok', 'Constellation'],
+  'Mazda': ['BT-50', 'CX-5', 'CX-9', 'Mazda6']
   };
   
   const typeOptions = [
@@ -55,7 +55,7 @@ const VehiclesPage = () => {
   ];
   
   const anneeOptions = Array.from({ length: 30 }, (_, i) => new Date().getFullYear() - i);
-  const placesOptions = [5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 25, 30, 35, 40, 45, 50];
+  const placesOptions = [5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 30, 35, 40, 45, 50];
 
   useEffect(() => {
     fetchVehicles();

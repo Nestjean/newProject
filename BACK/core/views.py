@@ -394,15 +394,26 @@ class VehiculeViewSet(viewsets.ModelViewSet):
 class TrajetViewSet(viewsets.ModelViewSet):
     queryset = Trajet.objects.all().order_by('-date', '-heure_depart')
     serializer_class = TrajetSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]  # ✅ Tous les authentifiés peuvent voir
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if hasattr(self.request.user, 'role') and self.request.user.role == 'chauffeur':
-            queryset = queryset.filter(chauffeur=self.request.user)
+        user = self.request.user
+        
+        # Chauffeur: voir uniquement ses trajets
+        if hasattr(user, 'role') and user.role == 'chauffeur':
+            queryset = queryset.filter(chauffeur=user)
+        # Caissier et Admin: voir tous les trajets
         return queryset
 
     def create(self, request, *args, **kwargs):
+        # Vérifier les droits (admin ou caissier)
+        if request.user.role not in ['admin', 'caissier']:
+            return Response({
+                'success': False,
+                'error': 'Vous n\'avez pas les droits pour créer un trajet'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
         try:
             serializer = self.get_serializer(data=request.data)
             if serializer.is_valid():
@@ -423,6 +434,13 @@ class TrajetViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
     def update(self, request, *args, **kwargs):
+        # Vérifier les droits (admin ou caissier)
+        if request.user.role not in ['admin', 'caissier']:
+            return Response({
+                'success': False,
+                'error': 'Vous n\'avez pas les droits pour modifier un trajet'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
         try:
             partial = kwargs.pop('partial', False)
             instance = self.get_object()
@@ -445,6 +463,13 @@ class TrajetViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, *args, **kwargs):
+        # Vérifier les droits (admin ou caissier)
+        if request.user.role not in ['admin', 'caissier']:
+            return Response({
+                'success': False,
+                'error': 'Vous n\'avez pas les droits pour supprimer un trajet'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
         try:
             instance = self.get_object()
             instance.delete()
@@ -476,36 +501,6 @@ class TrajetViewSet(viewsets.ModelViewSet):
         
         recette_jour, _ = RecetteJournaliere.objects.get_or_create(date=trajet.date)
         recette_jour.calculer_recette()
-
-    @action(detail=False, methods=['get'])
-    def recent(self, request):
-        trajets = self.get_queryset().filter(status='termine')[:5]
-        serializer = self.get_serializer(trajets, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=['get'])
-    def par_periode(self, request):
-        debut = request.query_params.get('debut')
-        fin = request.query_params.get('fin')
-        queryset = self.get_queryset()
-        if debut and fin:
-            queryset = queryset.filter(date__range=[debut, fin])
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get']) 
-    def statistiques(self, request):
-        mois = int(request.query_params.get('mois', timezone.now().month))
-        annee = int(request.query_params.get('annee', timezone.now().year))
-        trajets = Trajet.objects.filter(date__year=annee, date__month=mois, status='termine')
-        stats = {
-            'total_trajets': trajets.count(),
-            'total_passagers': trajets.aggregate(Sum('nombre_passagers'))['nombre_passagers__sum'] or 0,
-            'recettes_totales': float(sum(t.recette() for t in trajets)),
-            'destination_populaire': trajets.values('destination').annotate(count=Count('id')).order_by('-count').first(),
-            'moyenne_passagers_par_trajet': float(trajets.aggregate(Avg('nombre_passagers'))['nombre_passagers__avg'] or 0),
-        }
-        return Response(stats)
 
 # ========== DÉPENSES ==========
 class DepenseViewSet(viewsets.ModelViewSet):
@@ -594,27 +589,62 @@ class DashboardView(APIView):
         today = timezone.now().date()
         start_of_month = today.replace(day=1)
 
-        trajets_jour = Trajet.objects.filter(date=today, status='termine')
+        # Trajets du jour (tsy misy filtre status raha te hahita recette)
+        trajets_jour = Trajet.objects.filter(date=today)  # ✅ tsy misy filtre status
         depenses_jour = Depense.objects.filter(date=today)
-        recettes_jour = float(sum(t.recette() for t in trajets_jour))
+        
+        recettes_jour = 0
+        for t in trajets_jour:
+            try:
+                recettes_jour += float(t.nombre_passagers * t.prix_unitaire)
+            except:
+                pass
+        
         depenses_jour_total = float(depenses_jour.aggregate(Sum('montant'))['montant__sum'] or 0)
 
-        trajets_mois = Trajet.objects.filter(date__gte=start_of_month, status='termine')
+        # Trajets du mois
+        trajets_mois = Trajet.objects.filter(date__gte=start_of_month)  # ✅ tsy misy filtre status
         depenses_mois = Depense.objects.filter(date__gte=start_of_month)
-        recettes_mois = float(sum(t.recette() for t in trajets_mois))
+        
+        recettes_mois = 0
+        for t in trajets_mois:
+            try:
+                recettes_mois += float(t.nombre_passagers * t.prix_unitaire)
+            except:
+                pass
+        
         depenses_mois_total = float(depenses_mois.aggregate(Sum('montant'))['montant__sum'] or 0)
 
+        # ========== GRAPHIQUE: 7 DERNIERS JOURS (LUNDI → DIMANCHE) ==========
         jours_fr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
         chart_data = []
-        for i in range(6, -1, -1):
-            day = today - timedelta(days=i)
-            trajets_day = Trajet.objects.filter(date=day, status='termine')
+        
+        # Mamaritra ny Alatsinainy voalohany amin'ny herinandro
+        days_since_monday = today.weekday()  # 0=Lundi, 1=Mardi, ..., 6=Dimanche
+        start_of_week = today - timedelta(days=days_since_monday)
+        
+        for i in range(7):
+            day = start_of_week + timedelta(days=i)
+            trajets_day = Trajet.objects.filter(date=day)  # ✅ tsy misy filtre status
             depenses_day = Depense.objects.filter(date=day)
+            
+            # Calcul recettes du jour
+            recettes_day = 0
+            for t in trajets_day:
+                try:
+                    recettes_day += float(t.nombre_passagers * t.prix_unitaire)
+                except:
+                    pass
+            
+            depenses_day_total = float(depenses_day.aggregate(Sum('montant'))['montant__sum'] or 0)
+            
             chart_data.append({
-                'day': jours_fr[day.weekday()],
-                'recettes': float(sum(t.recette() for t in trajets_day)),
-                'depenses': float(depenses_day.aggregate(Sum('montant'))['montant__sum'] or 0)
+                'day': jours_fr[i],
+                'recettes': recettes_day,
+                'depenses': depenses_day_total
             })
+            
+            print(f"[DEBUG] {jours_fr[i]} {day}: recettes={recettes_day} Ar, depenses={depenses_day_total} Ar")
 
         data = {
             'recettes_jour': recettes_jour,
@@ -631,7 +661,9 @@ class DashboardView(APIView):
             'vehicules_disponibles': Vehicule.objects.filter(etat='disponible').count(),
             'chart_data': chart_data
         }
+        
         return Response(data)
+
 
 # ========== STATISTIQUES HEBDOMADAIRES ==========
 class StatsHebdomadairesView(APIView):
@@ -654,78 +686,126 @@ class StatsHebdomadairesView(APIView):
             })
         return Response(weekly_stats)
 
-# ========== COMMISSIONS ==========
+#============= commission ============
+
 class CommissionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         chauffeur_id = request.query_params.get('chauffeur')
-        if chauffeur_id:
+        user = request.user
+        
+        if user.role == 'chauffeur':
+            commissions = CommissionChauffeur.objects.filter(chauffeur=user)
+        elif chauffeur_id:
             commissions = CommissionChauffeur.objects.filter(chauffeur_id=chauffeur_id)
         else:
             commissions = CommissionChauffeur.objects.all().order_by('-periode_debut')
+        
         serializer = CommissionChauffeurSerializer(commissions, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        mois = int(request.data.get('mois', timezone.now().month))
-        annee = int(request.data.get('annee', timezone.now().year))
-        taux = float(request.data.get('taux', 10))
+        # Vérifier les droits
+        if request.user.role not in ['admin', 'caissier']:
+            return Response({
+                'success': False,
+                'error': 'Vous n\'avez pas les droits'
+            }, status=403)
+        
+        try:
+            mois = int(request.data.get('mois', timezone.now().month))
+            annee = int(request.data.get('annee', timezone.now().year))
+            taux = float(request.data.get('taux', 10))
 
-        dernier_jour = calendar.monthrange(annee, mois)[1]
-        start_date = date(annee, mois, 1)
-        end_date = date(annee, mois, dernier_jour)
+            dernier_jour = calendar.monthrange(annee, mois)[1]
+            start_date = date(annee, mois, 1)
+            end_date = date(annee, mois, dernier_jour)
 
-        chauffeurs = Utilisateur.objects.filter(role='chauffeur', est_actif=True)
-        commissions_crees = []
+            print(f"[DEBUG] Génération: {start_date} → {end_date}")
 
-        for chauffeur in chauffeurs:
-            trajets = Trajet.objects.filter(
-                chauffeur=chauffeur,
-                date__range=[start_date, end_date],
-                status='termine'
-            )
-            recettes = float(sum(t.recette() for t in trajets))
+            chauffeurs = Utilisateur.objects.filter(role='chauffeur', est_actif=True)
+            
+            if not chauffeurs.exists():
+                return Response({
+                    'success': False,
+                    'error': 'Aucun chauffeur actif'
+                }, status=400)
 
-            commission, created = CommissionChauffeur.objects.get_or_create(
-                chauffeur=chauffeur,
-                periode_debut=start_date,
-                periode_fin=end_date,
-                defaults={
-                    'recettes_realisees': recettes,
-                    'taux_commission': taux,
-                }
-            )
+            commissions_crees = []
 
-            if not created:
-                commission.recettes_realisees = recettes
-                commission.taux_commission = taux
+            for chauffeur in chauffeurs:
+                trajets = Trajet.objects.filter(
+                    chauffeur=chauffeur,
+                    date__range=[start_date, end_date],
+                    status='termine'
+                )
+                
+                recettes = float(sum(t.nombre_passagers * t.prix_unitaire for t in trajets))
 
-            commission.calculer_commission()
-            commission.save()
-            commissions_crees.append(commission)
+                commission, created = CommissionChauffeur.objects.get_or_create(
+                    chauffeur=chauffeur,
+                    periode_debut=start_date,
+                    periode_fin=end_date,
+                    defaults={
+                        'recettes_realisees': recettes,
+                        'taux_commission': taux,
+                        'est_paye': False
+                    }
+                )
 
-        serializer = CommissionChauffeurSerializer(commissions_crees, many=True)
-        return Response({
-            'success': True,
-            'message': 'Commissions calculées avec succès',
-            'data': serializer.data
-        }, status=status.HTTP_201_CREATED)
+                if not created:
+                    commission.recettes_realisees = recettes
+                    commission.taux_commission = taux
+
+                commission.calculer_commission()
+                commission.save()
+                commissions_crees.append(commission)
+
+            serializer = CommissionChauffeurSerializer(commissions_crees, many=True)
+            return Response({
+                'success': True,
+                'message': f'{len(commissions_crees)} commission(s) générée(s)',
+                'data': serializer.data
+            }, status=201)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
 
     def put(self, request, pk=None):
         try:
             commission = CommissionChauffeur.objects.get(pk=pk)
+            
+            if request.user.role not in ['admin', 'caissier']:
+                return Response({
+                    'success': False,
+                    'error': 'Droits insuffisants'
+                }, status=403)
+            
             commission.est_paye = True
             commission.save()
+            
             return Response({
                 'success': True,
-                'message': 'Commission marquée comme payée'
-            }, status=status.HTTP_200_OK)
+                'message': 'Commission payée',
+                'data': {'id': commission.id, 'est_paye': True}
+            }, status=200)
+            
         except CommissionChauffeur.DoesNotExist:
             return Response({
                 'success': False,
                 'error': 'Commission non trouvée'
-            }, status=status.HTTP_404_NOT_FOUND)
+            }, status=404)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=400)
 
 # ========== RAPPORTS ==========
 class ReportView(APIView):
@@ -736,14 +816,19 @@ class ReportView(APIView):
         today = date.today()
         
         if periode == 'semaine':
+            # Alatsinainy → Alahady
             start_date = today - timedelta(days=today.weekday())
             end_date = start_date + timedelta(days=6)
         elif periode == 'mois':
+            # 1er → farany ambany amin'ny volana
             start_date = today.replace(day=1)
-            end_date = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+            # Farany ambany amin'ny volana
+            next_month = today.replace(day=28) + timedelta(days=4)
+            end_date = next_month - timedelta(days=next_month.day)
         elif periode == 'annee':
-            start_date = date(today.year, 1, 1)
-            end_date = date(today.year, 12, 31)
+            # 1er Janvier → 31 Desambra
+            start_date = today.replace(month=1, day=1)
+            end_date = today.replace(month=12, day=31)
         else:
             start_date_str = request.query_params.get('start_date')
             end_date_str = request.query_params.get('end_date')
@@ -753,6 +838,7 @@ class ReportView(APIView):
             else:
                 return Response({'error': 'Période invalide'}, status=400)
 
+        # Récupérer les trajets et dépenses
         trajets = Trajet.objects.filter(date__range=[start_date, end_date], status='termine')
         depenses = Depense.objects.filter(date__range=[start_date, end_date])
 
@@ -760,6 +846,7 @@ class ReportView(APIView):
         depenses_totales = float(depenses.aggregate(Sum('montant'))['montant__sum'] or 0)
         benefice_total = recettes_totales - depenses_totales
 
+        # Générer daily_stats pour TOUS les jours de la période
         jours_fr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
         daily_stats = []
         current_date = start_date
@@ -767,11 +854,16 @@ class ReportView(APIView):
         while current_date <= end_date:
             trajets_day = trajets.filter(date=current_date)
             depenses_day = depenses.filter(date=current_date)
+            
+            recettes_day = float(sum(t.recette() for t in trajets_day))
+            depenses_day_total = float(depenses_day.aggregate(Sum('montant'))['montant__sum'] or 0)
+            
             daily_stats.append({
                 'date': current_date.strftime('%Y-%m-%d'),
                 'jour': jours_fr[current_date.weekday()],
-                'recettes': float(sum(t.recette() for t in trajets_day)),
-                'depenses': float(depenses_day.aggregate(Sum('montant'))['montant__sum'] or 0),
+                'recettes': recettes_day,
+                'depenses': depenses_day_total,
+                'benefice': recettes_day - depenses_day_total,
                 'nombre_trajets': trajets_day.count()
             })
             current_date += timedelta(days=1)

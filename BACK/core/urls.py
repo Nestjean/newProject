@@ -5,11 +5,8 @@ from .views import *
 router = DefaultRouter()
 router.register('utilisateurs', UtilisateurViewSet)
 router.register('vehicules', VehiculeViewSet)
-router.register('vehicles', VehiculeViewSet, basename='vehicle')
 router.register('trajets', TrajetViewSet)
-router.register('trips', TrajetViewSet, basename='trip')
 router.register('depenses', DepenseViewSet)
-router.register('expenses', DepenseViewSet, basename='expense')
 
 urlpatterns = [
     path('test/', test_api),
@@ -23,5 +20,6 @@ urlpatterns = [
     path('dashboard/', DashboardView.as_view(), name='dashboard'),
     path('dashboard/stats-hebdo/', StatsHebdomadairesView.as_view(), name='dashboard_stats_hebdo'),
     path('commissions/', CommissionView.as_view(), name='commissions'),
+    path('commissions/<int:pk>/', CommissionView.as_view(), name='commission-detail'),
     path('reports/', ReportView.as_view(), name='reports'),
 ]

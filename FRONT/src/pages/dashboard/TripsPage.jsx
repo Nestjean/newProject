@@ -4,8 +4,11 @@ import DashboardLayout from '../../components/Layouts/DashboardLayout';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import { useAuth } from '../../context/AuthContext';
+import { Link } from 'react-router-dom';
 
 const TripsPage = () => {
+  const { user } = useAuth();
   const [trips, setTrips] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [drivers, setDrivers] = useState([]);
@@ -22,7 +25,13 @@ const TripsPage = () => {
     enCours: 0
   });
   
-  // ========== OPTIONS POUR LES SÉLECTEURS ==========
+  // Vérifier les rôles
+  const isAdmin = user?.role === 'admin';
+  const isCaissier = user?.role === 'caissier';
+  const isChauffeur = user?.role === 'chauffeur';
+  const canEdit = isAdmin || isCaissier; // Admin et Caissier peuvent modifier/ajouter
+  const canViewAll = isAdmin || isCaissier; // Admin et Caissier voient tous les trajets
+  
   const origineOptions = [
     'Antananarivo', 'Toamasina', 'Mahajanga', 'Fianarantsoa', 
     'Antsirabe', 'Toliara', 'Antsiranana', 'Morondava', 'Manakara'
@@ -63,7 +72,14 @@ const TripsPage = () => {
 
   const fetchTrips = async () => {
     try {
-      const response = await api.get('/trajets/');
+      let response;
+      if (isChauffeur) {
+        // Chauffeur: voir uniquement ses propres trajets
+        response = await api.get(`/trajets/?chauffeur=${user.id}`);
+      } else {
+        // Admin/Caissier: voir tous les trajets
+        response = await api.get('/trajets/');
+      }
       const data = response.data || [];
       setTrips(data);
       
@@ -105,6 +121,11 @@ const TripsPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    if (!canEdit) {
+      toast.error('Vous n\'avez pas les droits pour cette action');
+      return;
+    }
     
     if (!formData.destination || !formData.vehicule || !formData.chauffeur) {
       toast.error('Veuillez remplir tous les champs obligatoires');
@@ -149,12 +170,16 @@ const TripsPage = () => {
   };
 
   const handleDeleteClick = (trip) => {
+    if (!canEdit) {
+      toast.error('Vous n\'avez pas les droits pour supprimer');
+      return;
+    }
     setTripToDelete(trip);
     setShowDeleteModal(true);
   };
 
   const handleConfirmDelete = async () => {
-    if (!tripToDelete) return;
+    if (!tripToDelete || !canEdit) return;
     setLoading(true);
     try {
       await api.delete(`/trajets/${tripToDelete.id}/`);
@@ -171,6 +196,10 @@ const TripsPage = () => {
   };
 
   const handleEdit = (trip) => {
+    if (!canEdit) {
+      toast.error('Vous n\'avez pas les droits pour modifier');
+      return;
+    }
     setEditingTrip(trip);
     setFormData({
       date: trip.date || new Date().toISOString().split('T')[0],
@@ -215,37 +244,12 @@ const TripsPage = () => {
     return Number(amount).toLocaleString('fr-FR') + ' Ar';
   };
 
-  // ========== ICÔNES STATUT SVG ==========
-  const StatusTermineIcon = () => (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-
-  const StatusPlanifieIcon = () => (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-    </svg>
-  );
-
-  const StatusEnCoursIcon = () => (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-
-  const StatusAnnuleIcon = () => (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-
   const getStatusBadge = (status) => {
     const config = {
-      termine: { color: 'bg-green-100 text-green-700', label: 'Terminé', icon: <StatusTermineIcon /> },
-      planifie: { color: 'bg-blue-100 text-blue-700', label: 'Planifié', icon: <StatusPlanifieIcon /> },
-      en_cours: { color: 'bg-yellow-100 text-yellow-700', label: 'En cours', icon: <StatusEnCoursIcon /> },
-      annule: { color: 'bg-red-100 text-red-700', label: 'Annulé', icon: <StatusAnnuleIcon /> }
+      termine: { color: 'bg-green-100 text-green-700', label: 'Terminé', icon: '✅' },
+      planifie: { color: 'bg-blue-100 text-blue-700', label: 'Planifié', icon: '📅' },
+      en_cours: { color: 'bg-yellow-100 text-yellow-700', label: 'En cours', icon: '🔄' },
+      annule: { color: 'bg-red-100 text-red-700', label: 'Annulé', icon: '❌' }
     };
     return config[status] || config.planifie;
   };
@@ -265,7 +269,25 @@ const TripsPage = () => {
     );
   }
 
-  // ========== ICÔNES SVG POUR FORMULAIRE ==========
+  // ========== ICÔNES SVG ==========
+  const SearchIcon = () => (
+    <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  );
+
+  const PlusIcon = () => (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+    </svg>
+  );
+
+  const CloseIcon = () => (
+    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+
   const CalendarIcon = () => (
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -312,37 +334,41 @@ const TripsPage = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* HEADER */}
-        <div className="bg-red-600 rounded-2xl p-6 text-white">
+        {/* ========== HEADER ========== */}
+        <div className="bg-gradient-to-r from-red-600 to-red-500 rounded-2xl p-6 text-white">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="text-2xl font-bold flex items-center gap-2">
                 <CarIcon />
-                Trajets
+                {isChauffeur ? 'Mes Trajets' : 'Gestion des trajets'}
               </h1>
-              <p className="text-red-100 mt-1">Gestion des trajets</p>
+              <p className="text-red-100 mt-1">
+                {isChauffeur 
+                  ? 'Consultez vos trajets effectués et planifiés' 
+                  : 'Gérez tous les trajets de la coopérative'}
+              </p>
             </div>
-            <button 
-              onClick={() => { resetForm(); setShowModal(true); }}
-              className="bg-white text-red-600 px-5 py-2.5 rounded-xl flex items-center gap-2 font-medium hover:bg-gray-100 transition-all shadow-md"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Nouveau trajet
-            </button>
+            {canEdit && !isChauffeur && (
+              <button 
+                onClick={() => { resetForm(); setShowModal(true); }}
+                className="bg-white text-red-600 px-5 py-2.5 rounded-xl flex items-center gap-2 font-medium hover:bg-gray-100 transition-all shadow-md"
+              >
+                <PlusIcon />
+                Nouveau trajet
+              </button>
+            )}
           </div>
         </div>
 
-        {/* STATS CARDS */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* ========== STATS CARDS ========== */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-500 text-sm">Total trajets</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
+                <p className="text-gray-500 text-sm font-medium">Total trajets</p>
+                <p className="text-3xl font-bold text-gray-900">{stats.total}</p>
               </div>
-              <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+              <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
                 <CarIcon />
               </div>
             </div>
@@ -351,23 +377,13 @@ const TripsPage = () => {
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-green-600 text-sm">Terminés</p>
-                <p className="text-2xl font-bold text-green-600">{stats.termine}</p>
+                <p className="text-green-600 text-sm font-medium">Terminés</p>
+                <p className="text-3xl font-bold text-green-600">{stats.termine}</p>
               </div>
-              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
-                <StatusTermineIcon />
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-blue-600 text-sm">Planifiés</p>
-                <p className="text-2xl font-bold text-blue-600">{stats.planifie}</p>
-              </div>
-              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                <StatusPlanifieIcon />
+              <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
               </div>
             </div>
           </div>
@@ -375,31 +391,44 @@ const TripsPage = () => {
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-yellow-600 text-sm">En cours</p>
-                <p className="text-2xl font-bold text-yellow-600">{stats.enCours}</p>
+                <p className="text-blue-600 text-sm font-medium">Planifiés</p>
+                <p className="text-3xl font-bold text-blue-600">{stats.planifie}</p>
               </div>
-              <div className="w-10 h-10 bg-yellow-100 rounded-xl flex items-center justify-center">
-                <StatusEnCoursIcon />
+              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                <CalendarIcon />
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-yellow-600 text-sm font-medium">En cours</p>
+                <p className="text-3xl font-bold text-yellow-600">{stats.enCours}</p>
+              </div>
+              <div className="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center">
+                <ClockIcon />
               </div>
             </div>
           </div>
         </div>
 
-        {/* RECHERCHE */}
+        {/* ========== RECHERCHE ========== */}
         <div className="relative">
-          <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          <SearchIcon />
           <input
             type="text"
-            placeholder="Rechercher un trajet..."
+            placeholder="Rechercher un trajet (destination, origine, chauffeur, véhicule)..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+            className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition-all"
           />
+          <p className="text-xs text-gray-400 mt-2">
+            {filteredTrips.length} trajet{filteredTrips.length > 1 ? 's' : ''} trouvé{filteredTrips.length > 1 ? 's' : ''}
+          </p>
         </div>
 
-        {/* TABLEAU DES TRAJETS */}
+        {/* ========== TABLEAU DES TRAJETS ========== */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -413,25 +442,29 @@ const TripsPage = () => {
                   <th className="text-left py-4 px-4 text-xs font-semibold text-gray-600 uppercase">Véhicule</th>
                   <th className="text-right py-4 px-4 text-xs font-semibold text-gray-600 uppercase">Recette</th>
                   <th className="text-center py-4 px-4 text-xs font-semibold text-gray-600 uppercase">Statut</th>
-                  <th className="text-center py-4 px-4 text-xs font-semibold text-gray-600 uppercase">Actions</th>
+                  {canEdit && !isChauffeur && (
+                    <th className="text-center py-4 px-4 text-xs font-semibold text-gray-600 uppercase">Actions</th>
+                  )}
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-100">
                 {filteredTrips.length === 0 ? (
                   <tr>
-                    <td colSpan="9" className="text-center py-12 text-gray-500">
+                    <td colSpan={canEdit && !isChauffeur ? 9 : 8} className="text-center py-12 text-gray-500">
                       <svg className="w-16 h-16 mx-auto text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                       </svg>
                       <p>Aucun trajet trouvé</p>
-                      <button onClick={() => { resetForm(); setShowModal(true); }} className="mt-3 text-red-600 hover:text-red-700">+ Nouveau trajet</button>
+                      {canEdit && !isChauffeur && (
+                        <button onClick={() => { resetForm(); setShowModal(true); }} className="mt-3 text-red-600 hover:text-red-700">+ Nouveau trajet</button>
+                      )}
                     </td>
                   </tr>
                 ) : (
                   filteredTrips.map((t) => {
                     const statusBadge = getStatusBadge(t.status);
                     return (
-                      <tr key={t.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                      <tr key={t.id} className="hover:bg-gray-50 transition-colors group">
                         <td className="py-3 px-4 text-sm text-gray-600">{formatDate(t.date)}</td>
                         <td className="py-3 px-4 text-sm text-gray-800 font-medium">{t.origine || 'Antananarivo'}</td>
                         <td className="py-3 px-4 text-sm text-gray-800 font-medium">{t.destination}</td>
@@ -441,23 +474,25 @@ const TripsPage = () => {
                         <td className="py-3 px-4 text-right font-semibold text-red-600">{formatCurrency(t.nombre_passagers * t.prix_unitaire)}</td>
                         <td className="py-3 px-4 text-center">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusBadge.color}`}>
-                            {statusBadge.icon} {statusBadge.label}
+                            <span>{statusBadge.icon}</span> {statusBadge.label}
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            <button onClick={() => handleEdit(t)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition" title="Modifier">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
-                            </button>
-                            <button onClick={() => handleDeleteClick(t)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition" title="Supprimer">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                            </button>
-                          </div>
-                        </td>
+                        {canEdit && !isChauffeur && (
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={() => handleEdit(t)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition" title="Modifier">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                              <button onClick={() => handleDeleteClick(t)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition" title="Supprimer">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     );
                   })
@@ -468,11 +503,10 @@ const TripsPage = () => {
         </div>
       </div>
 
-      {/* MODAL AJOUT/MODIFICATION */}
-      {showModal && (
+      {/* ========== MODAL AJOUT/MODIFICATION (Admin/Caissier seulement) ========== */}
+      {showModal && canEdit && !isChauffeur && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-all" onClick={() => setShowModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden animate-zoomIn" onClick={(e) => e.stopPropagation()}>
-            {/* HEADER MODAL */}
             <div className="bg-gradient-to-r from-red-600 to-red-700 p-5 sticky top-0">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-3">
@@ -486,83 +520,44 @@ const TripsPage = () => {
                     <p className="text-red-100 text-sm mt-0.5">Remplissez tous les champs obligatoires *</p>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setShowModal(false)} 
-                  className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-all hover:rotate-90 duration-200"
-                >
-                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                <button onClick={() => setShowModal(false)} className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-all hover:rotate-90 duration-200">
+                  <CloseIcon />
                 </button>
               </div>
             </div>
 
-            {/* FORMULAIRE */}
             <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto max-h-[calc(90vh-120px)]">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <CalendarIcon />
-                    Date <span className="text-red-500">*</span>
+                    <CalendarIcon /> Date <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="date"
-                    value={formData.date}
-                    onChange={(e) => setFormData({...formData, date: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    required
-                  />
+                  <input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <ClockIcon />
-                    Heure départ <span className="text-red-500">*</span>
+                    <ClockIcon /> Heure départ <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="time"
-                    value={formData.heure_depart}
-                    onChange={(e) => setFormData({...formData, heure_depart: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    required
-                  />
+                  <input type="time" value={formData.heure_depart} onChange={(e) => setFormData({...formData, heure_depart: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Origine - SELECTEUR */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <LocationIcon />
-                    Origine <span className="text-red-500">*</span>
+                    <LocationIcon /> Origine <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={formData.origine}
-                    onChange={(e) => setFormData({...formData, origine: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    required
-                  >
-                    {origineOptions.map(option => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
+                  <select value={formData.origine} onChange={(e) => setFormData({...formData, origine: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required>
+                    {origineOptions.map(option => <option key={option} value={option}>{option}</option>)}
                   </select>
                 </div>
-
-                {/* Destination - SELECTEUR */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <LocationIcon />
-                    Destination <span className="text-red-500">*</span>
+                    <LocationIcon /> Destination <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={formData.destination}
-                    onChange={(e) => setFormData({...formData, destination: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    required
-                  >
-                    <option value="">-- Sélectionner une destination --</option>
-                    {destinationOptions.map(option => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
+                  <select value={formData.destination} onChange={(e) => setFormData({...formData, destination: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required>
+                    <option value="">-- Sélectionner --</option>
+                    {destinationOptions.map(option => <option key={option} value={option}>{option}</option>)}
                   </select>
                 </div>
               </div>
@@ -570,50 +565,22 @@ const TripsPage = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <DistanceIcon />
-                    Distance (km)
+                    <DistanceIcon /> Distance (km)
                   </label>
-                  <input
-                    type="number"
-                    placeholder="350"
-                    value={formData.distance}
-                    onChange={(e) => setFormData({...formData, distance: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    min="0"
-                    step="1"
-                  />
+                  <input type="number" placeholder="350" value={formData.distance} onChange={(e) => setFormData({...formData, distance: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" min="0" step="1" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <UsersIcon />
-                    Nombre passagers <span className="text-red-500">*</span>
+                    <UsersIcon /> Passagers <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="number"
-                    placeholder="15"
-                    value={formData.nombre_passagers}
-                    onChange={(e) => setFormData({...formData, nombre_passagers: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    required
-                    min="1"
-                  />
+                  <input type="number" placeholder="15" value={formData.nombre_passagers} onChange={(e) => setFormData({...formData, nombre_passagers: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required min="1" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <MoneyIcon />
-                    Prix unitaire (Ar) <span className="text-red-500">*</span>
+                    <MoneyIcon /> Prix unitaire (Ar) <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <input
-                      type="number"
-                      placeholder="6000"
-                      value={formData.prix_unitaire}
-                      onChange={(e) => setFormData({...formData, prix_unitaire: e.target.value})}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                      required
-                      min="0"
-                      step="100"
-                    />
+                    <input type="number" placeholder="6000" value={formData.prix_unitaire} onChange={(e) => setFormData({...formData, prix_unitaire: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required min="0" step="100" />
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Ar</span>
                   </div>
                 </div>
@@ -622,51 +589,30 @@ const TripsPage = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <CarIcon />
-                    Véhicule <span className="text-red-500">*</span>
+                    <CarIcon /> Véhicule <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={formData.vehicule}
-                    onChange={(e) => setFormData({...formData, vehicule: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    required
-                  >
-                    <option value="">-- Sélectionner un véhicule --</option>
-                    {vehicles.map(v => (
-                      <option key={v.id} value={v.id}>{v.marque} {v.modele} ({v.immatriculation})</option>
-                    ))}
+                  <select value={formData.vehicule} onChange={(e) => setFormData({...formData, vehicule: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required>
+                    <option value="">-- Sélectionner --</option>
+                    {vehicles.map(v => <option key={v.id} value={v.id}>{v.marque} {v.modele} ({v.immatriculation})</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <UsersIcon />
-                    Chauffeur <span className="text-red-500">*</span>
+                    <UsersIcon /> Chauffeur <span className="text-red-500">*</span>
                   </label>
-                  <select                    value={formData.chauffeur}
-                    onChange={(e) => setFormData({...formData, chauffeur: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                    required
-                  >
-                    <option value="">-- Sélectionner un chauffeur --</option>
-                    {drivers.map(d => (
-                      <option key={d.id} value={d.id}>{d.first_name} {d.last_name} (@{d.username})</option>
-                    ))}
+                  <select value={formData.chauffeur} onChange={(e) => setFormData({...formData, chauffeur: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" required>
+                    <option value="">-- Sélectionner --</option>
+                    {drivers.map(d => <option key={d.id} value={d.id}>{d.first_name} {d.last_name} (@{d.username})</option>)}
                   </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Statut avec icônes SVG */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <ClockIcon />
-                    Statut <span className="text-red-500">*</span>
+                    <ClockIcon /> Statut <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={formData.status}
-                    onChange={(e) => setFormData({...formData, status: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                  >
+                  <select value={formData.status} onChange={(e) => setFormData({...formData, status: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition">
                     <option value="planifie">Planifié</option>
                     <option value="en_cours">En cours</option>
                     <option value="termine">Terminé</option>
@@ -675,41 +621,17 @@ const TripsPage = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
-                    <ClockIcon />
-                    Heure arrivée (optionnel)
+                    <ClockIcon /> Heure arrivée (optionnel)
                   </label>
-                  <input
-                    type="time"
-                    value={formData.heure_arrivee}
-                    onChange={(e) => setFormData({...formData, heure_arrivee: e.target.value})}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition"
-                  />
+                  <input type="time" value={formData.heure_arrivee} onChange={(e) => setFormData({...formData, heure_arrivee: e.target.value})} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition" />
                 </div>
               </div>
 
               <div className="flex gap-3 pt-4 border-t border-gray-200">
-                <button 
-                  type="submit" 
-                  className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white py-3 rounded-xl transition-all font-semibold shadow-md disabled:opacity-50"
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Enregistrement...
-                    </span>
-                  ) : (
-                    editingTrip ? '✓ Modifier le trajet' : '✓ Enregistrer le trajet'
-                  )}
+                <button type="submit" className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white py-3 rounded-xl transition-all font-semibold shadow-md disabled:opacity-50" disabled={loading}>
+                  {loading ? 'Enregistrement...' : (editingTrip ? '✓ Modifier le trajet' : '✓ Enregistrer le trajet')}
                 </button>
-                <button 
-                  type="button" 
-                  onClick={() => setShowModal(false)} 
-                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl transition-all font-medium"
-                >
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl transition-all font-medium">
                   Annuler
                 </button>
               </div>
@@ -718,8 +640,8 @@ const TripsPage = () => {
         </div>
       )}
 
-      {/* MODAL SUPPRESSION */}
-      {showDeleteModal && (
+      {/* ========== MODAL SUPPRESSION (Admin/Caissier seulement) ========== */}
+      {showDeleteModal && canEdit && !isChauffeur && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowDeleteModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 animate-zoomIn" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 text-center">
@@ -729,17 +651,13 @@ const TripsPage = () => {
                 </svg>
               </div>
               <h3 className="text-xl font-bold text-gray-900 mb-2">Confirmer la suppression</h3>
-              <p className="text-gray-500 mb-4">Êtes-vous sûr de vouloir supprimer ce trajet ?</p>
+              <p className="text-gray-500 mb-4">Cette action est irréversible.</p>
               <p className="text-sm font-medium text-gray-700 mb-6 bg-gray-100 p-3 rounded-xl">
                 {tripToDelete?.origine} → {tripToDelete?.destination} ({formatDate(tripToDelete?.date)})
               </p>
               <div className="flex gap-3">
-                <button onClick={handleConfirmDelete} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl transition font-medium">
-                  Supprimer
-                </button>
-                <button onClick={() => { setShowDeleteModal(false); setTripToDelete(null); }} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl transition font-medium">
-                  Annuler
-                </button>
+                <button onClick={handleConfirmDelete} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl transition font-medium">Supprimer</button>
+                <button onClick={() => { setShowDeleteModal(false); setTripToDelete(null); }} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl transition font-medium">Annuler</button>
               </div>
             </div>
           </div>

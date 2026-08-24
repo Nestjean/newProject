@@ -1,5 +1,4 @@
-// src/pages/dashboard/DashboardPage.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '../../components/Layouts/DashboardLayout';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -25,6 +24,7 @@ const DashboardPage = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [animate, setAnimate] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(new Date());
   const [stats, setStats] = useState({
     recettes_jour: 0, depenses_jour: 0, benefice_jour: 0,
     recettes_mois: 0, depenses_mois: 0, benefice_mois: 0,
@@ -33,15 +33,9 @@ const DashboardPage = () => {
   });
   const [recentTrips, setRecentTrips] = useState([]);
   const [chartData, setChartData] = useState({ recettes: [0,0,0,0,0,0,0], depenses: [0,0,0,0,0,0,0] });
-  const [totalChauffeurs, setTotalChauffeurs] = useState(0);
+  const [chartLabels, setChartLabels] = useState(['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']);
 
-  useEffect(() => {
-    fetchDashboardData();
-    setTimeout(() => setAnimate(true), 100);
-  }, []);
-
-  const fetchDashboardData = async () => {
-    setLoading(true);
+  const fetchDashboardData = useCallback(async () => {
     try {
       const dashboardRes = await api.get('dashboard/');
       const data = dashboardRes.data;
@@ -60,50 +54,52 @@ const DashboardPage = () => {
         vehicules_disponibles: data.vehicules_disponibles || 0,
       });
 
-      const chauffeursRes = await api.get('utilisateurs/?role=chauffeur');
-      setTotalChauffeurs(chauffeursRes.data.length);
-
       const trajetsRes = await api.get('trajets/');
       const trajets = trajetsRes.data || [];
       const trajetsTermines = Array.isArray(trajets) ? trajets.filter(t => t.status === 'termine') : [];
       setRecentTrips([...trajetsTermines].reverse().slice(0, 5));
 
-      const recettes7Jours = [];
-      const depenses7Jours = [];
-      
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().split('T')[0];
-        
-        const recettesJour = trajetsTermines
-          .filter(t => t.date === dateStr)
-          .reduce((sum, t) => sum + (t.nombre_passagers * t.prix_unitaire), 0);
-        recettes7Jours.push(recettesJour);
-        
-        try {
-          const depensesRes = await api.get(`depenses/?date=${dateStr}`);
-          const depensesData = depensesRes.data || [];
-          const depensesJour = Array.isArray(depensesData) ? depensesData.reduce((sum, d) => sum + Number(d.montant), 0) : 0;
-          depenses7Jours.push(depensesJour);
-        } catch {
-          depenses7Jours.push(0);
-        }
+      if (data.chart_data && data.chart_data.length === 7) {
+        const recettes7Jours = data.chart_data.map(item => item.recettes);
+        const depenses7Jours = data.chart_data.map(item => item.depenses);
+        const labels7Jours = data.chart_data.map(item => item.day);
+        setChartLabels(labels7Jours);
+        setChartData({ recettes: recettes7Jours, depenses: depenses7Jours });
       }
       
-      setChartData({ 
-        recettes: recettes7Jours.length === 7 ? recettes7Jours : [0,0,0,0,0,0,0], 
-        depenses: depenses7Jours.length === 7 ? depenses7Jours : [0,0,0,0,0,0,0]
-      });
+      setLastUpdate(new Date());
       
     } catch (error) {
       console.error('Erreur:', error);
       toast.error('Impossible de charger les données');
-      setChartData({ recettes: [0,0,0,0,0,0,0], depenses: [0,0,0,0,0,0,0] });
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardData();
+    setTimeout(() => setAnimate(true), 100);
+    
+    const interval = setInterval(() => {
+      console.log('🔄 Mise à jour automatique du dashboard...');
+      fetchDashboardData();
+    }, 30000);
+    
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('🔄 Rafraîchissement après retour sur l\'onglet');
+        fetchDashboardData();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [fetchDashboardData]);
 
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null) return '0 Ar';
@@ -117,6 +113,10 @@ const DashboardPage = () => {
   
   const maxValue = Math.max(...recettesData, ...depensesData, 10000);
   const yStep = Math.ceil(maxValue / 4);
+  
+  const marge = stats.recettes_mois > 0 
+    ? ((stats.benefice_mois / stats.recettes_mois) * 100).toFixed(1) 
+    : 0;
 
   if (loading) return <LoadingSpinner message="Chargement de votre tableau de bord..." />;
 
@@ -124,7 +124,7 @@ const DashboardPage = () => {
     <DashboardLayout>
       <div className={`space-y-6 transition-all duration-700 ${animate ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
         
-        {/* ========== HEADER ========== */}
+        {/* HEADER */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Tableau de bord</h1>
@@ -135,25 +135,34 @@ const DashboardPage = () => {
               </p>
             </div>
           </div>
-          <div className="bg-gradient-to-r from-red-600 to-red-500 rounded-2xl px-6 py-3 shadow-lg">
-            <p className="text-red-100 text-xs font-medium">Performance globale</p>
-            <p className="text-white text-2xl font-bold">+{stats.recettes_mois > 0 ? Math.floor((stats.benefice_mois / stats.recettes_mois) * 100) : 0}%</p>
-            <div className="mt-1 h-1 bg-white/30 rounded-full"><div className="h-full bg-white rounded-full w-2/3"></div></div>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <p className="text-xs text-gray-400">Dernière mise à jour</p>
+              <p className="text-sm font-medium text-gray-600">{lastUpdate.toLocaleTimeString('fr-FR')}</p>
+            </div>
+            <div className="bg-gradient-to-r from-red-600 to-red-500 rounded-2xl px-6 py-3 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer">
+              <p className="text-red-100 text-xs font-medium">Performance globale</p>
+              <p className="text-white text-2xl font-bold">+{marge}%</p>
+              <div className="mt-1 h-1 bg-white/30 rounded-full">
+                <div className="h-full bg-white rounded-full" style={{ width: `${marge}%` }}></div>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* ========== STATS CARDS ========== */}
+        {/* 4 CARTES SEXY AVEC HOVER EFFECT */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {/* Recettes */}
+          
+          {/* Carte 1: Recettes du Jour */}
           <div className="group relative overflow-hidden bg-gradient-to-br from-red-600 to-red-500 rounded-2xl p-6 text-white shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-2 cursor-pointer">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-500"></div>
             <div className="relative z-10">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-red-100 text-xs font-medium uppercase tracking-wider">Recettes du Jour</p>
+                  <p className="text-red-100 text-xs font-medium uppercase tracking-wider">RECETTES DU JOUR</p>
                   <p className="text-3xl font-bold mt-2">{formatCurrency(stats.recettes_jour)}</p>
                 </div>
-                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm group-hover:bg-white/30 transition-all">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
@@ -166,20 +175,24 @@ const DashboardPage = () => {
                 <span className="text-xs text-red-100">+12% vs hier</span>
                 <div className="ml-auto text-[10px] bg-white/20 px-2 py-1 rounded-full">Objectif 85%</div>
               </div>
-              <div className="mt-4"><div className="h-1.5 bg-white/30 rounded-full"><div className="h-full bg-white rounded-full w-[85%]"></div></div></div>
+              <div className="mt-4">
+                <div className="h-1.5 bg-white/30 rounded-full">
+                  <div className="h-full bg-white rounded-full w-[85%] group-hover:w-[90%] transition-all duration-500"></div>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Dépenses */}
+          {/* Carte 2: Dépenses */}
           <div className="group relative overflow-hidden bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-2 cursor-pointer">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-500"></div>
             <div className="relative z-10">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Dépenses</p>
+                  <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">DÉPENSES</p>
                   <p className="text-3xl font-bold mt-2">{formatCurrency(stats.depenses_jour)}</p>
                 </div>
-                <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm group-hover:bg-white/20 transition-all">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                   </svg>
@@ -192,20 +205,24 @@ const DashboardPage = () => {
                 <span className="text-xs text-gray-400">-3% vs hier</span>
                 <div className="ml-auto text-[10px] bg-white/20 px-2 py-1 rounded-full">Budget 65%</div>
               </div>
-              <div className="mt-4"><div className="h-1.5 bg-white/20 rounded-full"><div className="h-full bg-white rounded-full w-[65%]"></div></div></div>
+              <div className="mt-4">
+                <div className="h-1.5 bg-white/20 rounded-full">
+                  <div className="h-full bg-white rounded-full w-[65%] group-hover:w-[70%] transition-all duration-500"></div>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Bénéfice */}
+          {/* Carte 3: Bénéfice net (Mois) */}
           <div className="group relative overflow-hidden bg-gradient-to-br from-red-500 to-red-400 rounded-2xl p-6 text-white shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-2 cursor-pointer">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-500"></div>
             <div className="relative z-10">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-red-100 text-xs font-medium uppercase tracking-wider">Bénéfice net (mois)</p>
+                  <p className="text-red-100 text-xs font-medium uppercase tracking-wider">BÉNÉFICE NET (MOIS)</p>
                   <p className="text-3xl font-bold mt-2">{formatCurrency(stats.benefice_mois)}</p>
                 </div>
-                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm group-hover:bg-white/30 transition-all">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                   </svg>
@@ -215,23 +232,27 @@ const DashboardPage = () => {
                 <svg className="w-4 h-4 text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                 </svg>
-                <span className="text-xs text-red-100">Marge: {stats.recettes_mois > 0 ? ((stats.benefice_mois / stats.recettes_mois) * 100).toFixed(1) : 0}%</span>
+                <span className="text-xs text-red-100">Marge: {marge}%</span>
                 <div className="ml-auto text-[10px] bg-white/20 px-2 py-1 rounded-full">Objectif 60%</div>
               </div>
-              <div className="mt-4"><div className="h-1.5 bg-white/30 rounded-full"><div className="h-full bg-white rounded-full" style={{ width: `${Math.min(100, (stats.benefice_mois / stats.recettes_mois) * 100)}%` }}></div></div></div>
+              <div className="mt-4">
+                <div className="h-1.5 bg-white/30 rounded-full">
+                  <div className="h-full bg-white rounded-full" style={{ width: `${Math.min(100, parseFloat(marge))}%` }}></div>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Trajets */}
+          {/* Carte 4: Trajets aujourd'hui */}
           <div className="group relative overflow-hidden bg-gradient-to-br from-black to-gray-900 rounded-2xl p-6 text-white shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-2 cursor-pointer">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-500"></div>
             <div className="relative z-10">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Trajets Aujourd'hui</p>
+                  <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">TRAJETS AUJOURD'HUI</p>
                   <p className="text-3xl font-bold mt-2">{stats.nombre_trajets_jour}</p>
                 </div>
-                <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm group-hover:bg-white/20 transition-all">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                   </svg>
@@ -241,16 +262,22 @@ const DashboardPage = () => {
                 <span className="text-xs text-gray-400">Objectif journalier</span>
                 <div className="ml-auto text-[10px] bg-white/20 px-2 py-1 rounded-full">20 trajets</div>
               </div>
-              <div className="mt-4"><div className="h-1.5 bg-white/20 rounded-full"><div className="h-full bg-white rounded-full" style={{ width: `${Math.min(100, (stats.nombre_trajets_jour / 20) * 100)}%` }}></div></div></div>
+              <div className="mt-4">
+                <div className="h-1.5 bg-white/20 rounded-full">
+                  <div className="h-full bg-white rounded-full" style={{ width: `${Math.min(100, (stats.nombre_trajets_jour / 20) * 100)}%` }}></div>
+                </div>
+              </div>
               <p className="text-xs text-gray-400 mt-3 flex items-center gap-1">
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
                 {stats.passagers_total_jour} passagers transportés
               </p>
             </div>
           </div>
         </div>
 
-        {/* ========== GRAPHIQUE ========== */}
+        {/* GRAPHIQUE */}
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 hover:shadow-xl transition-all duration-300">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <div>
@@ -260,14 +287,14 @@ const DashboardPage = () => {
                 </svg>
                 Recettes vs Dépenses
               </h2>
-              <p className="text-sm text-gray-500 mt-1">Évolution sur la semaine</p>
+              <p className="text-sm text-gray-500 mt-1">Évolution sur les 7 derniers jours</p>
             </div>
             <div className="flex gap-6">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 cursor-pointer hover:scale-105 transition-transform">
                 <div className="w-3 h-3 bg-red-600 rounded-full ring-2 ring-red-200"></div>
                 <span className="text-sm text-gray-600 font-medium">Recettes</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 cursor-pointer hover:scale-105 transition-transform">
                 <div className="w-3 h-3 bg-gray-900 rounded-full ring-2 ring-gray-200"></div>
                 <span className="text-sm text-gray-600 font-medium">Dépenses</span>
               </div>
@@ -276,7 +303,7 @@ const DashboardPage = () => {
           <div className="h-80">
             <Line 
               data={{
-                labels: ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'],
+                labels: chartLabels,
                 datasets: [
                   {
                     label: 'Recettes',
@@ -316,7 +343,12 @@ const DashboardPage = () => {
                   tooltip: { backgroundColor: '#1a1a1a', callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` } }
                 },
                 scales: {
-                  y: { beginAtZero: true, max: maxValue, grid: { color: '#e5e7eb' }, ticks: { callback: (v) => v >= 1000 ? (v/1000) + 'k' : v, stepSize: yStep } },
+                  y: { 
+                    beginAtZero: true, 
+                    max: maxValue, 
+                    grid: { color: '#e5e7eb' }, 
+                    ticks: { callback: (v) => v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v, stepSize: yStep } 
+                  },
                   x: { grid: { display: false }, ticks: { font: { size: 12, weight: 'bold' }, color: '#6B7280' } }
                 },
               }}
@@ -324,7 +356,7 @@ const DashboardPage = () => {
           </div>
         </div>
 
-        {/* ========== DERNIERS TRAJETS ========== */}
+        {/* DERNIERS TRAJETS */}
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-all duration-300">
           <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center">
             <div>
@@ -365,7 +397,7 @@ const DashboardPage = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {recentTrips.map((trip) => (
-                    <tr key={trip.id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={trip.id} className="hover:bg-gray-50 transition-colors cursor-pointer">
                       <td className="py-4 px-6 text-sm text-gray-600">{formatDate(trip.date)}</td>
                       <td className="py-4 px-6">
                         <div className="flex items-center gap-3">
@@ -392,54 +424,7 @@ const DashboardPage = () => {
             )}
           </div>
         </div>
-
-        {/* ========== STATS SUPPLÉMENTAIRES ========== */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-gradient-to-br from-red-600 to-red-500 rounded-2xl p-6 text-white shadow-lg hover:shadow-xl transition-all duration-300">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-white/20 rounded-xl">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="font-semibold text-lg">Chauffeurs actifs</h3>
-                <p className="text-red-200 text-sm">sur {totalChauffeurs || stats.chauffeurs_actifs} chauffeurs</p>
-              </div>
-            </div>
-            <p className="text-5xl font-bold">{stats.chauffeurs_actifs}</p>
-            <div className="mt-4 w-full bg-white/20 rounded-full h-2">
-              <div className="h-full bg-white rounded-full transition-all duration-1000" style={{ width: `${totalChauffeurs > 0 ? (stats.chauffeurs_actifs / totalChauffeurs) * 100 : 0}%` }}></div>
-            </div>
-          </div>
-
-          <div className="relative overflow-hidden bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white shadow-lg hover:shadow-xl transition-all duration-300 group">
-            <div className="absolute -right-10 -top-10 w-32 h-32 bg-white/5 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
-            <div className="relative">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-white/10 rounded-xl">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="font-semibold text-lg">Objectif du mois</h3>
-                  <p className="text-gray-400 text-sm">Recettes mensuelles</p>
-                </div>
-              </div>
-              <p className="text-3xl font-bold">{formatCurrency(stats.recettes_mois)}</p>
-              <div className="mt-4">
-                <div className="w-full bg-white/20 rounded-full h-2">
-                  <div className="h-full bg-red-500 rounded-full transition-all duration-1000" style={{ width: `${Math.min(100, (stats.recettes_mois / 1250000) * 100)}%` }}></div>
-                </div>
-                <div className="flex justify-between mt-2 text-sm">
-                  <span className="text-gray-400">{Math.min(100, (stats.recettes_mois / 1250000) * 100).toFixed(0)}% atteint</span>
-                  <span className="text-gray-400">{formatCurrency(stats.recettes_mois)} / 1 250 000 Ar</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        
       </div>
     </DashboardLayout>
   );

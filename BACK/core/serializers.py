@@ -39,11 +39,14 @@ class DepenseSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class CommissionChauffeurSerializer(serializers.ModelSerializer):
-    chauffeur_nom = serializers.StringRelatedField(source='chauffeur', read_only=True)
-
+    chauffeur_nom = serializers.SerializerMethodField()
+    
     class Meta:
         model = CommissionChauffeur
         fields = '__all__'
+    
+    def get_chauffeur_nom(self, obj):
+        return f"{obj.chauffeur.first_name} {obj.chauffeur.last_name}".strip() or obj.chauffeur.username
 
 class DashboardSerializer(serializers.Serializer):
     recettes_jour = serializers.DecimalField(max_digits=15, decimal_places=2)

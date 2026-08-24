@@ -1,11 +1,11 @@
 import React from 'react';
 
-const CotisseLogo = ({ className = "w-8 h-8" }) => {
+const CotisseLogo = ({ className = "w-32 h-auto" }) => {
   return (
-    <img 
-      src="/cotisse-logo.png" 
-      alt="Cotisse" 
-      className={`${className} object-cover rounded-full`}
+    <img
+      src="/cotisse-logo.png"
+      alt="Cotisse Transport"
+      className={className}
     />
   );
 };

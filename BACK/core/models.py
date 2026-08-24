@@ -131,7 +131,12 @@ class CommissionChauffeur(models.Model):
     taux_commission = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     montant_commission = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     est_paye = models.BooleanField(default=False)
+    # date_paiement = models.DateField(null=True, blank=True)
+    # date_creation = models.DateTimeField(auto_now_add=True)  # COMMENTE IZAO
 
     def calculer_commission(self):
         self.montant_commission = (self.recettes_realisees * self.taux_commission) / 100
         return self.montant_commission
+
+    def __str__(self):
+        return f"{self.chauffeur.username} - {self.periode_debut} à {self.periode_fin}"
